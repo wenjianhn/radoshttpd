@@ -38,6 +38,8 @@ func getData(striper rados.StriperPool, oid string, filename string) error{
    return nil
 }
 
+
+
 type RadosDownloader struct {
   striper *rados.StriperPool
   soid string
@@ -53,6 +55,45 @@ func (rd *RadosDownloader) Read(p []byte) (n int, err error) {
   return count, err
 }
 
+/* copied from  io package */
+/* default buf is too small for inner web */
+func Copy(dst io.Writer, src io.Reader) (written int64, err error) {
+   // If the reader has a WriteTo method, use it to do the copy.
+   // Avoids an allocation and a copy.
+   if wt, ok := src.(io.WriterTo); ok {
+       return wt.WriteTo(dst)
+   }
+   // Similarly, if the writer has a ReadFrom method, use it to do the copy.
+   if rt, ok := dst.(io.ReaderFrom); ok {
+       return rt.ReadFrom(src)
+   }
+   buf := make([]byte, 32<<20)
+   for {
+       nr, er := src.Read(buf)
+       if nr > 0 {
+           nw, ew := dst.Write(buf[0:nr])
+           if nw > 0 {
+               written += int64(nw)
+           }
+           if ew != nil {
+               err = ew
+               break
+           }
+           if nr != nw {
+               err = io.ErrShortWrite
+               break
+           }
+       }
+       if er == io.EOF {
+           break
+       }
+       if er != nil {
+           err = er
+           break
+       }
+   }
+   return written, err
+}
 
 func main() {
     conn, err := rados.NewConn("admin")
@@ -93,6 +134,8 @@ func main() {
      m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[A-Za-z0-9]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request){
          poolname := params["pool"]
          soid := params["soid"]
+         /* FIXME */
+         /* error checking */
          pool, err := conn.OpenPool(poolname)
          if err != nil {
            /* FIXME */
@@ -109,13 +152,23 @@ func main() {
          defer striper.Destroy()
 
 
+         filename := fmt.Sprintf("%s-%s.file",poolname, soid)
+         size, err :=  striper.State(soid)
+         if err != nil {
+           /* FIXME */
+           size = 0
+         }
+
          rd := RadosDownloader{&striper, soid, 0}
          /* set content-type */
-         w.Header().Set("Content-Disposition", "attachment; filename=Wiki.png")
+         /* Content-Type would be others */
          w.Header().Set("Content-Type", r.Header.Get("Content-Type"))
+         w.Header().Set("Content-Length", fmt.Sprintf("%llu",size))
+         w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+
 
          /* set the stream */
-         io.Copy(w,&rd)
+         Copy(w,&rd)
      })
 
     /* end */

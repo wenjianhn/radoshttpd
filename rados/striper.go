@@ -35,3 +35,14 @@ func (sp *StriperPool) Read(oid string, data []byte, offset uint64) (int, error)
 func (sp *StriperPool) Destroy() {
     C.rados_striper_destroy(sp.striper);
 }
+
+func (sp *StriperPool) State(oid string) (uint64, error) {
+    c_oid := C.CString(oid)
+    defer C.free(unsafe.Pointer(c_oid))
+    var c_psize C.uint64_t
+    ret := C.rados_striper_stat(sp.striper, c_oid, &c_psize, nil)
+    if ret < 0 {
+      return 0, RadosError(int(ret))
+    }
+    return uint64(c_psize), nil
+}
