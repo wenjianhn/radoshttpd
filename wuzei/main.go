@@ -108,30 +108,9 @@ func main() {
     }
     defer conn.Shutdown()
 
-    /* start from here */
-    /*
-    pool, err := conn.OpenPool("data")
-    if err != nil {
-        return
-    }
-    defer pool.Destroy()
-
-    striper, err := pool.CreateStriper()
-    if err != nil {
-        return
-    }
-    defer striper.Destroy()
-    */
-
-    /*
-    err= getData(striper, "go", "dat.0")
-    if err != nil {
-        fmt.Println("error")
-    }
-    */
 
     m := martini.Classic()
-     m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[A-Za-z0-9]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request){
+    m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[A-Za-z0-9-\\.]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request){
          poolname := params["pool"]
          soid := params["soid"]
          /* FIXME */
@@ -152,7 +131,7 @@ func main() {
          defer striper.Destroy()
 
 
-         filename := fmt.Sprintf("%s-%s.file",poolname, soid)
+         filename := fmt.Sprintf("%s-%s",poolname, soid)
          size, err :=  striper.State(soid)
          if err != nil {
            /* FIXME */
