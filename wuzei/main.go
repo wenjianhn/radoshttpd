@@ -7,6 +7,7 @@ import (
     "os"
     "net/http"
     "io"
+    "log"
 )
 
 /* this getData function is to test download remote rados file */
@@ -67,7 +68,7 @@ func Copy(dst io.Writer, src io.Reader) (written int64, err error) {
    if rt, ok := dst.(io.ReaderFrom); ok {
        return rt.ReadFrom(src)
    }
-   buf := make([]byte, 32<<20)
+   buf := make([]byte, 16<<20)
    for {
        nr, er := src.Read(buf)
        if nr > 0 {
@@ -95,7 +96,22 @@ func Copy(dst io.Writer, src io.Reader) (written int64, err error) {
    return written, err
 }
 
+var LOGPATH = "/var/log/wuzei.log"
+
 func main() {
+    /* log  */
+
+    f, err := os.OpenFile(LOGPATH, os.O_RDWR | os.O_CREATE | os.O_APPEND, 0666)
+    if err != nil {
+      fmt.Println("failed to open log\n");
+      return
+    }
+    defer f.Close()
+
+    m := martini.Classic()
+    log := log.New(f, "[wuzei]", log.LstdFlags)
+    m.Map(log)
+
     conn, err := rados.NewConn("admin")
     if err != nil {
         return
@@ -109,23 +125,20 @@ func main() {
     defer conn.Shutdown()
 
 
-    m := martini.Classic()
     m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[A-Za-z0-9-\\.]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request){
          poolname := params["pool"]
          soid := params["soid"]
-         /* FIXME */
-         /* error checking */
          pool, err := conn.OpenPool(poolname)
          if err != nil {
-           /* FIXME */
-           fmt.Println("open pool failed")
+           log.Println("open pool failed")
            return
          }
          defer pool.Destroy()
 
          striper, err := pool.CreateStriper()
          if err != nil {
-           fmt.Println("open pool failed")
+           log.Println("open pool failed")
+           ErrorHandler(w,r,http.StatusNotFound)
            return
          }
          defer striper.Destroy()
@@ -134,15 +147,16 @@ func main() {
          filename := fmt.Sprintf("%s-%s",poolname, soid)
          size, err :=  striper.State(soid)
          if err != nil {
-           /* FIXME */
-           size = 0
+           log.Println("failed to get object " + soid)
+           ErrorHandler(w,r,http.StatusNotFound)
+           return
          }
 
          rd := RadosDownloader{&striper, soid, 0}
          /* set content-type */
          /* Content-Type would be others */
          w.Header().Set("Content-Type", r.Header.Get("Content-Type"))
-         w.Header().Set("Content-Length", fmt.Sprintf("%llu",size))
+         w.Header().Set("Content-Length", fmt.Sprintf("%d",size))
          w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 
 
@@ -153,3 +167,13 @@ func main() {
     /* end */
     http.ListenAndServe(":3000", m)
 }
+
+
+func ErrorHandler(w http.ResponseWriter, r *http.Request, status int) {
+  switch status {
+  case http.StatusNotFound:
+    w.WriteHeader(status)
+    w.Write([]byte("object not found"))
+  }
+}
+
