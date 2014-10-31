@@ -24,7 +24,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestGetSetConfigOption(t *testing.T) {
-    conn, _ := NewConn()
+    conn, _ := NewConn("admin")
 
     // rejects invalid options
     err := conn.SetConfigOption("wefoijweojfiw", "welfkwjelkfj")
@@ -42,7 +42,7 @@ func TestGetSetConfigOption(t *testing.T) {
 }
 
 func TestParseDefaultConfigEnv(t *testing.T) {
-    conn, _ := NewConn()
+    conn, _ := NewConn("admin")
 
     log_file_val, _ := conn.GetConfigOption("log_file")
     assert.NotEqual(t, log_file_val, "/dev/null")
@@ -58,7 +58,7 @@ func TestParseDefaultConfigEnv(t *testing.T) {
 }
 
 func TestParseCmdLineArgs(t *testing.T) {
-    conn, _ := NewConn()
+    conn, _ := NewConn("admin")
     conn.ReadDefaultConfigFile()
 
     mon_host_val, _ := conn.GetConfigOption("mon_host")
@@ -73,7 +73,7 @@ func TestParseCmdLineArgs(t *testing.T) {
 }
 
 func TestGetClusterStats(t *testing.T) {
-    conn, _ := NewConn()
+    conn, _ := NewConn("admin")
     conn.ReadDefaultConfigFile()
     conn.Connect()
 
@@ -109,7 +109,7 @@ func TestGetClusterStats(t *testing.T) {
 }
 
 func TestGetFSID(t *testing.T) {
-    conn, _ := NewConn()
+    conn, _ := NewConn("admin")
     conn.ReadDefaultConfigFile()
     conn.Connect()
 
@@ -121,7 +121,7 @@ func TestGetFSID(t *testing.T) {
 }
 
 func TestGetInstanceID(t *testing.T) {
-    conn, _ := NewConn()
+    conn, _ := NewConn("admin")
     conn.ReadDefaultConfigFile()
     conn.Connect()
 
@@ -132,7 +132,7 @@ func TestGetInstanceID(t *testing.T) {
 }
 
 func TestMakeDeletePool(t *testing.T) {
-    conn, _ := NewConn()
+    conn, _ := NewConn("admin")
     conn.ReadDefaultConfigFile()
     conn.Connect()
 
@@ -195,7 +195,7 @@ func TestMakeDeletePool(t *testing.T) {
 }
 
 func TestPingMonitor(t *testing.T) {
-    conn, _ := NewConn()
+    conn, _ := NewConn("admin")
     conn.ReadDefaultConfigFile()
     conn.Connect()
 
@@ -223,7 +223,7 @@ func TestPingMonitor(t *testing.T) {
 }
 
 func TestReadConfigFile(t *testing.T) {
-    conn, _ := NewConn()
+    conn, _ := NewConn("admin")
 
     // check current log_file value
     log_file_val, err := conn.GetConfigOption("log_file")
@@ -253,7 +253,7 @@ func TestReadConfigFile(t *testing.T) {
 }
 
 func TestWaitForLatestOSDMap(t *testing.T) {
-    conn, _ := NewConn()
+    conn, _ := NewConn("admin")
     conn.ReadDefaultConfigFile()
     conn.Connect()
 
