@@ -2,12 +2,17 @@ package main
 import (
     "github.com/thesues/radoshttpd/rados"
     "github.com/codegangsta/martini"
+    "github.com/hydrogen18/stoppableListener"
     "fmt"
     "errors"
     "os"
     "net/http"
     "io"
     "log"
+    "net"
+    "os/signal"
+    "syscall"
+    "sync"
 )
 
 /* this getData function is to test download remote rados file */
@@ -165,7 +170,32 @@ func main() {
      })
 
     /* end */
-    http.ListenAndServe(":3000", m)
+    //http.ListenAndServe(":3000", m)
+    originalListener, err := net.Listen("tcp", ":3000")
+    sl, err := stoppableListener.New(originalListener)
+
+    server := http.Server{}
+    http.HandleFunc("/", m.ServeHTTP)
+
+
+    stop := make(chan os.Signal)
+    signal.Notify(stop, syscall.SIGINT)
+    var wg sync.WaitGroup
+    go func() {
+      wg.Add(1)
+      defer wg.Done()
+      server.Serve(sl)
+    }()
+
+    log.Printf("Serving HTTP\n")
+    select {
+    case signal := <-stop:
+      log.Printf("Got signal:%v\n", signal)
+    }
+    log.Printf("Stopping listener\n")
+    sl.Stop()
+    log.Printf("Waiting on server\n")
+    wg.Wait()
 }
 
 
