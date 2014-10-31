@@ -130,7 +130,11 @@ func main() {
     defer conn.Shutdown()
 
 
+    var wg sync.WaitGroup
     m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[A-Za-z0-9-\\.]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request){
+         wg.Add(1)
+         defer wg.Done()
+
          poolname := params["pool"]
          soid := params["soid"]
          pool, err := conn.OpenPool(poolname)
@@ -169,8 +173,6 @@ func main() {
          Copy(w,&rd)
      })
 
-    /* end */
-    //http.ListenAndServe(":3000", m)
     originalListener, err := net.Listen("tcp", ":3000")
     sl, err := stoppableListener.New(originalListener)
 
@@ -180,10 +182,8 @@ func main() {
 
     stop := make(chan os.Signal)
     signal.Notify(stop, syscall.SIGINT)
-    var wg sync.WaitGroup
+
     go func() {
-      wg.Add(1)
-      defer wg.Done()
       server.Serve(sl)
     }()
 
