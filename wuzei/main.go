@@ -73,7 +73,7 @@ func Copy(dst io.Writer, src io.Reader) (written int64, err error) {
    if rt, ok := dst.(io.ReaderFrom); ok {
        return rt.ReadFrom(src)
    }
-   buf := make([]byte, 16<<20)
+   buf := make([]byte, 4<<20)
    for {
        nr, er := src.Read(buf)
        if nr > 0 {
@@ -193,10 +193,10 @@ func main() {
     case signal := <-stop:
       log.Printf("Got signal:%v\n", signal)
     }
-    log.Printf("Stopping listener\n")
     sl.Stop()
     log.Printf("Waiting on server\n")
     wg.Wait()
+    log.Printf("Server shutdown\n")
 }
 
 
