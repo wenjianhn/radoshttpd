@@ -182,6 +182,7 @@ func main() {
 
     stop := make(chan os.Signal)
     signal.Notify(stop, syscall.SIGINT)
+    signal.Notify(stop, syscall.SIGTERM)
 
     go func() {
       server.Serve(sl)
