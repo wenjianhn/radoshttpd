@@ -22,3 +22,5 @@ rpmbuild \
 --define '_rpmfilename %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm' \
 -ba $RPMTOPDIR/SPECS/${PACKAGENAME}.spec &&
 echo Done
+rm -rf $RPMTOPDIR &
+

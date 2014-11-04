@@ -1,50 +1,27 @@
+/* GPLv3 */
+/* deanraccoon@gmail.com */
 package main
 import (
     "github.com/thesues/radoshttpd/rados"
     "github.com/codegangsta/martini"
     "github.com/hydrogen18/stoppableListener"
     "fmt"
-    "errors"
     "os"
     "net/http"
     "io"
-    "log"
     "net"
     "os/signal"
     "syscall"
     "sync"
+    "log"
 )
 
-/* this getData function is to test download remote rados file */
-func getData(striper rados.StriperPool, oid string, filename string) error{
-    var offset int = 0
-    var count  int = 0
-    var err error
-    buf := make([]byte, 32 << 20)
-    f, err := os.Create(filename)
-    if err != nil {
-            return errors.New("can not create file")
-    }
-    defer f.Close()
 
-    for {
-        count, err = striper.Read(oid, buf, uint64(offset))
-        if err != nil {
-            return errors.New("download failed")
-        }
-        if count == 0 {
-            break
-        }
-        f.WriteAt(buf[:count], int64(offset))
-
-        offset += count;
-        fmt.Println("%lu\r", offset);
-
-   }
-   return nil
-}
-
-
+var (
+  LOGPATH = "/var/log/wuzei.log"
+  PIDFILE = "/var/run/wuzei.pid"
+  slog *log.Logger
+)
 
 type RadosDownloader struct {
   striper *rados.StriperPool
@@ -101,11 +78,17 @@ func Copy(dst io.Writer, src io.Reader) (written int64, err error) {
    return written, err
 }
 
-var LOGPATH = "/var/log/wuzei.log"
+
 
 func main() {
-    /* log  */
+    /* pid */
+    if err := CreatePidfile(PIDFILE); err != nil {
+      fmt.Printf("can not create pid file %s\n", PIDFILE)
+      return
+    }
+    defer RemovePidfile(PIDFILE)
 
+    /* log  */
     f, err := os.OpenFile(LOGPATH, os.O_RDWR | os.O_CREATE | os.O_APPEND, 0666)
     if err != nil {
       fmt.Println("failed to open log\n");
@@ -114,8 +97,8 @@ func main() {
     defer f.Close()
 
     m := martini.Classic()
-    log := log.New(f, "[wuzei]", log.LstdFlags)
-    m.Map(log)
+    slog = log.New(f, "[wuzei]", log.LstdFlags)
+    m.Map(slog)
 
     conn, err := rados.NewConn("admin")
     if err != nil {
@@ -131,6 +114,10 @@ func main() {
 
 
     var wg sync.WaitGroup
+
+    m.Get("/whoareyou", func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("I AM WUZEI"))
+    })
     m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[A-Za-z0-9-\\.]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request){
          wg.Add(1)
          defer wg.Done()
@@ -139,14 +126,15 @@ func main() {
          soid := params["soid"]
          pool, err := conn.OpenPool(poolname)
          if err != nil {
-           log.Println("open pool failed")
+           slog.Println("open pool failed")
+           ErrorHandler(w,r,http.StatusNotFound)
            return
          }
          defer pool.Destroy()
 
          striper, err := pool.CreateStriper()
          if err != nil {
-           log.Println("open pool failed")
+           slog.Println("open pool failed")
            ErrorHandler(w,r,http.StatusNotFound)
            return
          }
@@ -156,7 +144,7 @@ func main() {
          filename := fmt.Sprintf("%s-%s",poolname, soid)
          size, err :=  striper.State(soid)
          if err != nil {
-           log.Println("failed to get object " + soid)
+           slog.Println("failed to get object " + soid)
            ErrorHandler(w,r,http.StatusNotFound)
            return
          }
@@ -188,15 +176,15 @@ func main() {
       server.Serve(sl)
     }()
 
-    log.Printf("Serving HTTP\n")
+    slog.Printf("Serving HTTP\n")
     select {
     case signal := <-stop:
-      log.Printf("Got signal:%v\n", signal)
+      slog.Printf("Got signal:%v\n", signal)
     }
     sl.Stop()
-    log.Printf("Waiting on server\n")
+    slog.Printf("Waiting on server\n")
     wg.Wait()
-    log.Printf("Server shutdown\n")
+    slog.Printf("Server shutdown\n")
 }
 
 
