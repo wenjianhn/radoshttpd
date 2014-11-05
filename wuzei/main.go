@@ -102,9 +102,14 @@ func main() {
 
 	conn, err := rados.NewConn("admin")
 	if err != nil {
+		slog.Println("failed to open keyring")
 		return
 	}
-	conn.ReadConfigFile("/etc/ceph/ceph.conf")
+	err = conn.ReadConfigFile("/etc/ceph/ceph.conf")
+	if err != nil {
+		slog.Println("failed to open ceph.conf")
+		return
+	}
 
 	err = conn.Connect()
 	if err != nil {
