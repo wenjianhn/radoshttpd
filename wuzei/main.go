@@ -1,6 +1,6 @@
 /* GPLv3 */
 /* deanraccoon@gmail.com */
-/* vim: set ts=4 smarttab noet : */
+/* vim: set ts=4 shiftwidth=4 smarttab noet : */
 
 package main
 
@@ -17,12 +17,15 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 )
 
 var (
 	LOGPATH = "/var/log/wuzei.log"
 	PIDFILE = "/var/run/wuzei.pid"
 	slog    *log.Logger
+	REQUESTTIMEOUT time.Duration = 20 /* seconds */
+	QUEUELENGTH = 500
 )
 
 type RadosDownloader struct {
@@ -123,7 +126,29 @@ func main() {
 	m.Get("/whoareyou", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("I AM WUZEI"))
 	})
+
+	var ProcessSlots = make(chan bool, QUEUELENGTH)
+
+	releaseSlot := func(){
+		<-ProcessSlots
+	}
+
 	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[A-Za-z0-9-\\.]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
+		/* used for graceful stop */
+		wg.Add(1)
+		defer wg.Done()
+
+		select {
+		case <- time.After(REQUESTTIMEOUT * time.Second):
+			/* send timeout to client*/
+			slog.Println("request timeout")
+			ErrorHandler(w, r, http.StatusRequestTimeout)
+			return
+		case ProcessSlots <- true:
+			/* write to channel to get a slot for writing rados object */
+		}
+		defer releaseSlot()
+
 
 		poolname := params["pool"]
 		soid := params["soid"]
@@ -157,10 +182,6 @@ func main() {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-
-		/* used for graceful stop */
-		wg.Add(1)
-		defer wg.Done()
 
 		/* set the stream */
 		Copy(w, &rd)
@@ -196,5 +217,8 @@ func ErrorHandler(w http.ResponseWriter, r *http.Request, status int) {
 	case http.StatusNotFound:
 		w.WriteHeader(status)
 		w.Write([]byte("object not found"))
+	case http.StatusRequestTimeout:
+		w.WriteHeader(status)
+		w.Write([]byte("server is too busy,timeout"))
 	}
 }
