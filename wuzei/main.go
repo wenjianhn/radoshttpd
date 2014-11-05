@@ -108,6 +108,7 @@ func main() {
 
 	err = conn.Connect()
 	if err != nil {
+		slog.Println("failed to connect to remote cluster")
 		return
 	}
 	defer conn.Shutdown()
@@ -118,8 +119,6 @@ func main() {
 		w.Write([]byte("I AM WUZEI"))
 	})
 	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[A-Za-z0-9-\\.]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
-		wg.Add(1)
-		defer wg.Done()
 
 		poolname := params["pool"]
 		soid := params["soid"]
@@ -139,7 +138,7 @@ func main() {
 		}
 		defer striper.Destroy()
 
-		filename := fmt.Sprintf("%s-%s", poolname, soid)
+		filename := fmt.Sprintf("%s", soid)
 		size, err := striper.State(soid)
 		if err != nil {
 			slog.Println("failed to get object " + soid)
@@ -150,9 +149,13 @@ func main() {
 		rd := RadosDownloader{&striper, soid, 0}
 		/* set content-type */
 		/* Content-Type would be others */
-		w.Header().Set("Content-Type", r.Header.Get("Content-Type"))
+		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+
+		/* used for graceful stop */
+		wg.Add(1)
+		defer wg.Done()
 
 		/* set the stream */
 		Copy(w, &rd)
