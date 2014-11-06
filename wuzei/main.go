@@ -18,69 +18,76 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"errors"
 )
 
 var (
 	LOGPATH = "/var/log/wuzei.log"
 	PIDFILE = "/var/run/wuzei.pid"
 	slog    *log.Logger
-	REQUESTTIMEOUT time.Duration = 20 /* seconds */
+	REQUESTTIMEOUT time.Duration = 5 /* seconds */
 	QUEUELENGTH = 500
 )
 
 type RadosDownloader struct {
 	striper *rados.StriperPool
 	soid    string
-	offset  uint64
+	offset  int
+	buffer []byte
+	waterhighmark int
+	waterlowmark int
 }
 
 func (rd *RadosDownloader) Read(p []byte) (n int, err error) {
-	count, err := rd.striper.Read(rd.soid, p, uint64(rd.offset))
-	if count == 0 {
-		return 0, io.EOF
+	var count int = 0
+	/* local buffer is empty */
+	if (rd.waterhighmark == rd.waterlowmark) {
+		count,err = rd.striper.Read(rd.soid, rd.buffer, uint64(rd.offset))
+		if err != nil {
+			return count, err
+		}
+		if count == 0 {
+			return 0, io.EOF
+		}
+		rd.offset += count
+		rd.waterhighmark = count
+		rd.waterlowmark = 0
 	}
-	rd.offset += uint64(count)
-	return count, err
+
+	l  := len(p)
+	if l <= rd.waterhighmark - rd.waterlowmark {
+		copy(p, rd.buffer[rd.waterlowmark:rd.waterlowmark + l])
+		rd.waterlowmark += l
+		return l, nil
+	} else {
+		copy(p, rd.buffer[rd.waterlowmark:rd.waterhighmark])
+		rd.waterlowmark = rd.waterhighmark
+		return rd.waterhighmark - rd.waterlowmark, nil
+	}
+
+	return 0, errors.New("read failed")
 }
 
-/* copied from  io package */
-/* default buf is too small for inner web */
-func Copy(dst io.Writer, src io.Reader) (written int64, err error) {
-	// If the reader has a WriteTo method, use it to do the copy.
-	// Avoids an allocation and a copy.
-	if wt, ok := src.(io.WriterTo); ok {
-		return wt.WriteTo(dst)
-	}
-	// Similarly, if the writer has a ReadFrom method, use it to do the copy.
-	if rt, ok := dst.(io.ReaderFrom); ok {
-		return rt.ReadFrom(src)
-	}
-	buf := make([]byte, 4<<20)
-	for {
-		nr, er := src.Read(buf)
-		if nr > 0 {
-			nw, ew := dst.Write(buf[0:nr])
-			if nw > 0 {
-				written += int64(nw)
-			}
-			if ew != nil {
-				err = ew
-				break
-			}
-			if nr != nw {
-				err = io.ErrShortWrite
-				break
-			}
+
+func (rd *RadosDownloader) Seek(offset int64, whence int) (int64, error) {
+	switch whence{
+	case 0:
+		rd.offset = int(offset)
+		return offset, nil
+	case 1:
+		rd.offset += int(offset)
+		return int64(rd.offset), nil
+	case 2:
+		size, err := rd.striper.State(rd.soid)
+		if err != nil {
+			return 0, nil
 		}
-		if er == io.EOF {
-			break
-		}
-		if er != nil {
-			err = er
-			break
-		}
+		rd.offset = int(size)
+		return int64(rd.offset), nil
+	default:
+		return 0, errors.New("failed to seek")
 	}
-	return written, err
+
 }
 
 func main() {
@@ -176,7 +183,10 @@ func main() {
 			return
 		}
 
-		rd := RadosDownloader{&striper, soid, 0}
+		/* use 4M buffer to read */
+		buffersize := 4<<20
+		rd := RadosDownloader{&striper, soid, 0, make([]byte, buffersize), 0, 0}
+
 		/* set content-type */
 		/* Content-Type would be others */
 		w.Header().Set("Content-Type", "application/octet-stream")
@@ -184,7 +194,7 @@ func main() {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 
 		/* set the stream */
-		Copy(w, &rd)
+		http.ServeContent(w, r, filename, time.Now(), &rd)
 	})
 
 	originalListener, err := net.Listen("tcp", ":3000")
@@ -194,8 +204,10 @@ func main() {
 	http.HandleFunc("/", m.ServeHTTP)
 
 	stop := make(chan os.Signal)
-	signal.Notify(stop, syscall.SIGINT)
-	signal.Notify(stop, syscall.SIGTERM)
+	signal.Notify(stop, syscall.SIGINT,
+						syscall.SIGHUP,
+						syscall.SIGQUIT,
+						syscall.SIGTERM)
 
 	go func() {
 		server.Serve(sl)
