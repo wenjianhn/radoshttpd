@@ -32,7 +32,7 @@ var (
 type RadosDownloader struct {
 	striper *rados.StriperPool
 	soid    string
-	offset  int
+	offset  int64
 	buffer []byte
 	waterhighmark int
 	waterlowmark int
@@ -49,7 +49,7 @@ func (rd *RadosDownloader) Read(p []byte) (n int, err error) {
 		if count == 0 {
 			return 0, io.EOF
 		}
-		rd.offset += count
+		rd.offset += int64(count)
 		rd.waterhighmark = count
 		rd.waterlowmark = 0
 	}
@@ -72,18 +72,18 @@ func (rd *RadosDownloader) Read(p []byte) (n int, err error) {
 func (rd *RadosDownloader) Seek(offset int64, whence int) (int64, error) {
 	switch whence{
 	case 0:
-		rd.offset = int(offset)
+		rd.offset = offset
 		return offset, nil
 	case 1:
-		rd.offset += int(offset)
-		return int64(rd.offset), nil
+		rd.offset += offset
+		return rd.offset, nil
 	case 2:
 		size, err := rd.striper.State(rd.soid)
 		if err != nil {
 			return 0, nil
 		}
-		rd.offset = int(size)
-		return int64(rd.offset), nil
+		rd.offset = int64(size)
+		return rd.offset, nil
 	default:
 		return 0, errors.New("failed to seek")
 	}
