@@ -41,6 +41,7 @@ rm -rf %{buildroot}
 %files
 %defattr(-,root,root,-)
 %{_bindir}/wuzei
+/etc/init.d/wuzei
 %doc
 
 

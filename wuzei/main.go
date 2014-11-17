@@ -26,7 +26,7 @@ var (
 	PIDFILE = "/var/run/wuzei.pid"
 	slog    *log.Logger
 	REQUESTTIMEOUT time.Duration = 5 /* seconds */
-	QUEUELENGTH = 500
+	QUEUELENGTH = 100
 )
 
 type RadosDownloader struct {

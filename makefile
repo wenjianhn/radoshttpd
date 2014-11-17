@@ -13,6 +13,7 @@ wuzei:
 
 install:
 	install -D build/bin/wuzei $$DESTDIR/usr/bin/wuzei
+	install -m 0755 scripts/wuzei.sh -D $$DESTDIR/etc/init.d/wuzei
 
 clean:
 	rm -fr rpm-build
