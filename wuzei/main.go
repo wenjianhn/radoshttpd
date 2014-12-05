@@ -22,8 +22,8 @@ import (
 )
 
 var (
-	LOGPATH = "/var/log/wuzei.log"
-	PIDFILE = "/var/run/wuzei.pid"
+	LOGPATH = "/var/log/wuzei/wuzei.log"
+	PIDFILE = "/var/run/wuzei/wuzei.pid"
 	slog    *log.Logger
 	QUEUETIMEOUT time.Duration = 5 /* seconds */
 	QUEUELENGTH = 100

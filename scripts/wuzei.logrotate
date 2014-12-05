@@ -1,0 +1,7 @@
+/var/log/wuzei/wuzei.log {
+    daily
+    dateext
+    compress
+    rotate 7
+    copytruncate
+}

@@ -42,6 +42,7 @@ rm -rf %{buildroot}
 %defattr(-,root,root,-)
 %{_bindir}/wuzei
 /etc/init.d/wuzei
+/etc/logrotate.d/wuzei
 %doc
 
 
