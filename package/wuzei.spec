@@ -43,6 +43,8 @@ rm -rf %{buildroot}
 %{_bindir}/wuzei
 /etc/init.d/wuzei
 /etc/logrotate.d/wuzei
+%dir /var/run/wuzei/
+%dir /var/log/wuzei/
 %doc
 
 

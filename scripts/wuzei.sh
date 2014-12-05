@@ -2,7 +2,7 @@
 # See how we were called.
 
 . /etc/rc.d/init.d/functions
-pidfile=/var/run/wuzei.pid
+pidfile=/var/run/wuzei/wuzei.pid
 prog=wuzei
 wuzei=/usr/bin/wuzei
 lockfile=/var/lock/subsys/wuzei
