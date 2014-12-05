@@ -25,8 +25,10 @@ var (
 	LOGPATH = "/var/log/wuzei.log"
 	PIDFILE = "/var/run/wuzei.pid"
 	slog    *log.Logger
-	REQUESTTIMEOUT time.Duration = 5 /* seconds */
+	QUEUETIMEOUT time.Duration = 5 /* seconds */
 	QUEUELENGTH = 100
+	MONTIMEOUT = "30"
+	OSDTIMEOUT = "30"
 )
 
 type RadosDownloader struct {
@@ -42,9 +44,10 @@ func (rd *RadosDownloader) Read(p []byte) (n int, err error) {
 	var count int = 0
 	/* local buffer is empty */
 	if (rd.waterhighmark == rd.waterlowmark) {
-		count,err = rd.striper.Read(rd.soid, rd.buffer, uint64(rd.offset))
+		count, err = rd.striper.Read(rd.soid, rd.buffer, uint64(rd.offset))
+		/* Timeout or read error occurs */
 		if err != nil {
-			return count, err
+			return count, errors.New("Timeout or Read Error")
 		}
 		if count == 0 {
 			return 0, io.EOF
@@ -115,11 +118,16 @@ func main() {
 		slog.Println("failed to open keyring")
 		return
 	}
+
+	conn.SetConfigOption("rados_mon_op_timeout", MONTIMEOUT)
+	conn.SetConfigOption("rados_osd_op_timeout", OSDTIMEOUT)
+
 	err = conn.ReadConfigFile("/etc/ceph/ceph.conf")
 	if err != nil {
 		slog.Println("failed to open ceph.conf")
 		return
 	}
+
 
 	err = conn.Connect()
 	if err != nil {
@@ -146,7 +154,7 @@ func main() {
 		defer wg.Done()
 
 		select {
-		case <- time.After(REQUESTTIMEOUT * time.Second):
+		case <- time.After(QUEUETIMEOUT * time.Second):
 			/* send timeout to client*/
 			slog.Println("request timeout")
 			ErrorHandler(w, r, http.StatusRequestTimeout)
