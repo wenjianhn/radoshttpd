@@ -148,7 +148,7 @@ func main() {
 		<-ProcessSlots
 	}
 
-	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[A-Za-z0-9-\\.]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
+	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		/* used for graceful stop */
 		wg.Add(1)
 		defer wg.Done()
