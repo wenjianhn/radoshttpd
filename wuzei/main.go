@@ -205,6 +205,37 @@ func main() {
 		http.ServeContent(w, r, filename, time.Now(), &rd)
 	})
 
+	m.Delete("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
+		/* used for graceful stop */
+		wg.Add(1)
+		defer wg.Done()
+		poolname := params["pool"]
+		soid := params["soid"]
+		pool, err := conn.OpenPool(poolname)
+		if err != nil {
+			slog.Println("open pool failed")
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		defer pool.Destroy()
+
+		striper, err := pool.CreateStriper()
+		if err != nil {
+			slog.Println("open pool failed")
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		defer striper.Destroy()
+
+		err = striper.Delete(soid)
+		if err != nil {
+			slog.Printf("delete object %s/%s failed\n", poolname, soid)
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
 	originalListener, err := net.Listen("tcp", ":3000")
 	sl, err := stoppableListener.New(originalListener)
 

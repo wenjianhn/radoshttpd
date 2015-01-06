@@ -1,4 +1,5 @@
 package rados
+/* vim: set ts=4 shiftwidth=4 smarttab noet : */
 
 // #cgo LDFLAGS: -lrados
 // #include <stdlib.h>
@@ -45,4 +46,14 @@ func (sp *StriperPool) State(oid string) (uint64, error) {
       return 0, RadosError(int(ret))
     }
     return uint64(c_psize), nil
+}
+
+func (sp *StriperPool) Delete(oid string) error {
+    c_oid := C.CString(oid)
+    defer C.free(unsafe.Pointer(c_oid))
+    ret := C.rados_striper_remove(sp.striper, c_oid)
+    if ret < 0 {
+      return RadosError(int(ret))
+    }
+    return nil
 }
