@@ -57,3 +57,23 @@ func (sp *StriperPool) Delete(oid string) error {
     }
     return nil
 }
+
+func (sp *StriperPool) Write(oid string, data []byte, offset uint64) (int, error) {
+  if len(data) == 0 {
+        return 0,nil
+  }
+
+  c_oid := C.CString(oid)
+  defer C.free(unsafe.Pointer(c_oid))
+
+  ret := C.rados_striper_write(sp.striper, c_oid,
+                               (*C.char)(unsafe.Pointer(&data[0])),
+                               C.size_t(len(data)),
+                               C.uint64_t(offset))
+  if ret >= 0 {
+        return int(ret), nil
+  } else {
+    return 0, RadosError(int(ret))
+  }
+
+}

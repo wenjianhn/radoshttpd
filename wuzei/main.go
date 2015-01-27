@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 	"errors"
+	"strings"
+	"strconv"
 )
 
 var (
@@ -38,6 +40,14 @@ type RadosDownloader struct {
 	buffer []byte
 	waterhighmark int
 	waterlowmark int
+}
+
+
+func min(a, b int) int {
+   if a < b {
+      return a
+   }
+   return b
 }
 
 func (rd *RadosDownloader) Read(p []byte) (n int, err error) {
@@ -147,6 +157,142 @@ func main() {
 	releaseSlot := func(){
 		<-ProcessSlots
 	}
+
+	/* resume upload protocal is based on http://www.grid.net.ru/nginx/resumable_uploads.en.html */
+	m.Put("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
+		/* prepare striprados */
+		wg.Add(1)
+		defer wg.Done()
+		select {
+		case <- time.After(QUEUETIMEOUT * time.Second):
+			/* send timeout to client*/
+			slog.Println("request timeout")
+			ErrorHandler(w, r, http.StatusRequestTimeout)
+			return
+		case ProcessSlots <- true:
+			/* write to channel to get a slot for writing rados object */
+		}
+		defer releaseSlot()
+
+		poolname := params["pool"]
+		soid := params["soid"]
+		pool, err := conn.OpenPool(poolname)
+		if err != nil {
+			slog.Println("open pool failed")
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		defer pool.Destroy()
+		striper, err := pool.CreateStriper()
+		if err != nil {
+			slog.Println("open pool failed")
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		defer striper.Destroy()
+
+		bytesRange := r.Header.Get("Content-Range")
+
+		var offset, start, end, size int64 = 0,0,0,0
+
+		if bytesRange != "" {
+			/* header format: Content-Range:bytes 0-99/300 */
+			/* remove bytes and space */
+			bytesRange = strings.Trim(bytesRange, "bytes")
+			bytesRange = strings.TrimSpace(bytesRange)
+
+			o := strings.Split(bytesRange, "/")
+			currentRange, s := o[0], o[1]
+
+
+			o = strings.Split(currentRange, "-")
+
+			/* o[0] is the start, o[1] is the end */
+			start, err = strconv.ParseInt(o[0], 10, 64)
+			if err != nil {
+				slog.Printf("parse Content-Range failed %s", bytesRange);
+				ErrorHandler(w, r, http.StatusBadRequest)
+				return
+			}
+			end, err = strconv.ParseInt(o[1], 10, 64)
+			if err != nil {
+				slog.Printf("parse Content-Range failed %s", bytesRange);
+				ErrorHandler(w, r, http.StatusBadRequest)
+				return
+			}
+
+			size, err = strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				slog.Printf("parse Content-Range failed %s", bytesRange);
+				ErrorHandler(w, r, http.StatusBadRequest)
+				return
+			}
+			/* I know this is ugly, this is a workaround, because libstriprados sometimes can not set size attr */
+			/* so I set object size before any real write */
+			if (size < 3) {
+				slog.Printf("wuzei does not support too small file, file byterange is %s", bytesRange);
+				ErrorHandler(w, r, http.StatusBadRequest)
+				return
+			}
+			/* "s" here is for futher debug */
+			striper.Write(soid, []byte("s"), uint64(size) -2);
+			/* above is ugly */
+		}
+
+		bufferSize := 4 << 20 /* 4M buffer */
+		buf := make([]byte, bufferSize)
+
+		if bytesRange != "" {
+			/* already get $start, $end, $size */
+			offset = start
+		} else {
+			offset = 0
+		}
+
+		for offset < end || bytesRange == "" {
+			l, err := r.Body.Read(buf)
+			if l == 0 {
+				break;
+			}
+			if err != nil {
+				slog.Printf("failed to read content from client url:%s", r.RequestURI)
+				ErrorHandler(w, r, http.StatusBadRequest)
+				return
+
+			}
+
+			/* for situation that actuall transfered data is larger than range */
+			if bytesRange != "" {
+				l = min(l, int(end - offset + 1))
+			}
+
+			_, err = striper.Write(soid, buf[:l], uint64(offset))
+			if err != nil {
+				slog.Printf("write to ceph timeout, url is:%s", r.RequestURI)
+				ErrorHandler(w, r, http.StatusRequestTimeout)
+				return
+			}
+			offset += int64(l)
+		}
+
+		w.Header().Set("Content-Type", "application/octet-stream")
+
+		if bytesRange == "" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		/* support for bytesRange */
+		if size == offset + 1 {
+			/* return code 200 */
+			w.WriteHeader(http.StatusOK)
+		} else {
+			/* 'offset - 1' is the last byte */
+			w.Header().Set("Range", fmt.Sprintf("%d-%d/%d", start, offset - 1,  size))
+			w.WriteHeader(http.StatusCreated)
+		}
+
+	})
 
 	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		/* used for graceful stop */
