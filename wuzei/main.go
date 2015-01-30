@@ -227,16 +227,6 @@ func main() {
 				ErrorHandler(w, r, http.StatusBadRequest)
 				return
 			}
-			/* I know this is ugly, this is a workaround, because libstriprados sometimes can not set size attr */
-			/* so I set object size before any real write */
-			if (size < 3) {
-				slog.Printf("wuzei does not support too small file, file byterange is %s", bytesRange);
-				ErrorHandler(w, r, http.StatusBadRequest)
-				return
-			}
-			/* "s" here is for futher debug */
-			striper.Write(soid, []byte("s"), uint64(size) -2);
-			/* above is ugly */
 		}
 
 		bufferSize := 4 << 20 /* 4M buffer */
