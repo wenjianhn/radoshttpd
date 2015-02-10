@@ -284,6 +284,52 @@ func main() {
 
 	})
 
+	m.Get("/info/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
+		/* used for graceful stop */
+		wg.Add(1)
+		defer wg.Done()
+
+		select {
+		case <- time.After(QUEUETIMEOUT * time.Second):
+			/* send timeout to client*/
+			slog.Println("request timeout")
+			ErrorHandler(w, r, http.StatusRequestTimeout)
+			return
+		case ProcessSlots <- true:
+			/* write to channel to get a slot for writing rados object */
+		}
+		defer releaseSlot()
+
+		poolname := params["pool"]
+		soid := params["soid"]
+		pool, err := conn.OpenPool(poolname)
+		if err != nil {
+			slog.Println("open pool failed")
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		defer pool.Destroy()
+
+		striper, err := pool.CreateStriper()
+		if err != nil {
+			slog.Println("open pool failed")
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		defer striper.Destroy()
+
+		size, err := striper.State(soid)
+		if err != nil {
+			slog.Println("failed to get object " + soid)
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		/* use json format */
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf("{\"size\":%d}", size)));
+		return
+	})
+
 	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		/* used for graceful stop */
 		wg.Add(1)
