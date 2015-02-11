@@ -26,11 +26,17 @@ import (
 var (
 	LOGPATH = "/var/log/wuzei/wuzei.log"
 	PIDFILE = "/var/run/wuzei/wuzei.pid"
-	slog    *log.Logger
 	QUEUETIMEOUT time.Duration = 5 /* seconds */
 	QUEUELENGTH = 100
 	MONTIMEOUT = "30"
 	OSDTIMEOUT = "30"
+	BUFFERSIZE = 4 << 20 /* 4M */
+
+	/* global variables */
+	slog    *log.Logger
+	conn *rados.Conn
+	ReqQueue RequestQueue
+	wg sync.WaitGroup
 )
 
 type RadosDownloader struct {
@@ -103,76 +109,176 @@ func (rd *RadosDownloader) Seek(offset int64, whence int) (int64, error) {
 
 }
 
-func main() {
-	/* pid */
-	if err := CreatePidfile(PIDFILE); err != nil {
-		fmt.Printf("can not create pid file %s\n", PIDFILE)
-		return
+
+/* RequestQueue has two functions */
+/* 2. slot is used to queue write/read request */
+
+type RequestQueue struct {
+	slots chan bool
+}
+
+func (r *RequestQueue) Init() {
+	r.slots = make(chan bool, QUEUELENGTH)
+}
+
+
+func (r *RequestQueue) inc() error{
+	select {
+		case <- time.After(QUEUETIMEOUT * time.Second):
+			return errors.New("Queue is too long, timeout")
+		case r.slots <- true:
+			/* write to channel to get a slot for writing/reading rados object */
 	}
-	defer RemovePidfile(PIDFILE)
+	return nil
+}
 
-	/* log  */
-	f, err := os.OpenFile(LOGPATH, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		fmt.Println("failed to open log\n")
-		return
-	}
-	defer f.Close()
-
-	m := martini.Classic()
-	slog = log.New(f, "[wuzei]", log.LstdFlags)
-	m.Map(slog)
-
-	conn, err := rados.NewConn("admin")
-	if err != nil {
-		slog.Println("failed to open keyring")
-		return
-	}
-
-	conn.SetConfigOption("rados_mon_op_timeout", MONTIMEOUT)
-	conn.SetConfigOption("rados_osd_op_timeout", OSDTIMEOUT)
-
-	err = conn.ReadConfigFile("/etc/ceph/ceph.conf")
-	if err != nil {
-		slog.Println("failed to open ceph.conf")
-		return
-	}
+func (r *RequestQueue) dec() {
+	<- r.slots
+}
 
 
-	err = conn.Connect()
-	if err != nil {
-		slog.Println("failed to connect to remote cluster")
-		return
-	}
-	defer conn.Shutdown()
+func GetHandler (params martini.Params, w http.ResponseWriter, r *http.Request) {
 
-	var wg sync.WaitGroup
-
-	m.Get("/whoareyou", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("I AM WUZEI"))
-	})
-
-	var ProcessSlots = make(chan bool, QUEUELENGTH)
-
-	releaseSlot := func(){
-		<-ProcessSlots
-	}
-
-	/* resume upload protocal is based on http://www.grid.net.ru/nginx/resumable_uploads.en.html */
-	m.Put("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
-		/* prepare striprados */
+		/* used for graceful stop */
 		wg.Add(1)
 		defer wg.Done()
-		select {
-		case <- time.After(QUEUETIMEOUT * time.Second):
-			/* send timeout to client*/
+		if err := ReqQueue.inc(); err != nil {
 			slog.Println("request timeout")
 			ErrorHandler(w, r, http.StatusRequestTimeout)
 			return
-		case ProcessSlots <- true:
-			/* write to channel to get a slot for writing rados object */
 		}
-		defer releaseSlot()
+		defer ReqQueue.dec()
+
+		poolname := params["pool"]
+		soid := params["soid"]
+		pool, err := conn.OpenPool(poolname)
+		if err != nil {
+			slog.Println("open pool failed")
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		defer pool.Destroy()
+
+		striper, err := pool.CreateStriper()
+		if err != nil {
+			slog.Println("open pool failed")
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		defer striper.Destroy()
+
+		filename := fmt.Sprintf("%s", soid)
+		size, err := striper.State(soid)
+		if err != nil {
+			slog.Println("failed to get object " + soid)
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+
+		/* use 4M buffer to read */
+		buffersize := BUFFERSIZE
+		rd := RadosDownloader{&striper, soid, 0, make([]byte, buffersize), 0, 0}
+
+		/* set content-type */
+		/* Content-Type would be others */
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+
+		/* set the stream */
+		http.ServeContent(w, r, filename, time.Now(), &rd)
+}
+
+func InfoHandler (params martini.Params, w http.ResponseWriter, r *http.Request) {
+		/* used for graceful stop */
+		wg.Add(1)
+		defer wg.Done()
+
+		if err := ReqQueue.inc(); err != nil {
+			slog.Println("request timeout")
+			ErrorHandler(w, r, http.StatusRequestTimeout)
+			return
+		}
+		defer ReqQueue.dec()
+
+		poolname := params["pool"]
+		soid := params["soid"]
+		pool, err := conn.OpenPool(poolname)
+		if err != nil {
+			slog.Println("open pool failed")
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		defer pool.Destroy()
+
+		striper, err := pool.CreateStriper()
+		if err != nil {
+			slog.Println("open pool failed")
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		defer striper.Destroy()
+
+		size, err := striper.State(soid)
+		if err != nil {
+			slog.Println("failed to get object " + soid)
+			ErrorHandler(w, r, http.StatusNotFound)
+			return
+		}
+		/* use json format */
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf("{\"size\":%d}", size)));
+		return
+}
+
+func DeleteHandler (params martini.Params, w http.ResponseWriter, r *http.Request) {
+	/* used for graceful stop */
+	wg.Add(1)
+	defer wg.Done()
+	if err := ReqQueue.inc(); err != nil {
+		slog.Println("request timeout")
+		ErrorHandler(w, r, http.StatusRequestTimeout)
+		return
+	}
+	defer ReqQueue.dec()
+
+	poolname := params["pool"]
+	soid := params["soid"]
+	pool, err := conn.OpenPool(poolname)
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer pool.Destroy()
+
+	striper, err := pool.CreateStriper()
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer striper.Destroy()
+	err = striper.Delete(soid)
+	if err != nil {
+		slog.Printf("delete object %s/%s failed\n", poolname, soid)
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+
+func PutHandler (params martini.Params, w http.ResponseWriter, r *http.Request) {
+
+		wg.Add(1)
+		defer wg.Done()
+		if err := ReqQueue.inc(); err != nil {
+			slog.Println("request timeout")
+			ErrorHandler(w, r, http.StatusRequestTimeout)
+			return
+		}
+		defer ReqQueue.dec()
 
 		poolname := params["pool"]
 		soid := params["soid"]
@@ -229,8 +335,7 @@ func main() {
 			}
 		}
 
-		bufferSize := 4 << 20 /* 4M buffer */
-		buf := make([]byte, bufferSize)
+		buf := make([]byte, BUFFERSIZE)
 
 		if bytesRange != "" {
 			/* already get $start, $end, $size */
@@ -281,142 +386,64 @@ func main() {
 			w.Header().Set("Range", fmt.Sprintf("%d-%d/%d", start, offset - 1,  size))
 			w.WriteHeader(http.StatusCreated)
 		}
+}
 
-	})
 
-	m.Get("/info/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
-		/* used for graceful stop */
-		wg.Add(1)
-		defer wg.Done()
 
-		select {
-		case <- time.After(QUEUETIMEOUT * time.Second):
-			/* send timeout to client*/
-			slog.Println("request timeout")
-			ErrorHandler(w, r, http.StatusRequestTimeout)
-			return
-		case ProcessSlots <- true:
-			/* write to channel to get a slot for writing rados object */
-		}
-		defer releaseSlot()
-
-		poolname := params["pool"]
-		soid := params["soid"]
-		pool, err := conn.OpenPool(poolname)
-		if err != nil {
-			slog.Println("open pool failed")
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		defer pool.Destroy()
-
-		striper, err := pool.CreateStriper()
-		if err != nil {
-			slog.Println("open pool failed")
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		defer striper.Destroy()
-
-		size, err := striper.State(soid)
-		if err != nil {
-			slog.Println("failed to get object " + soid)
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		/* use json format */
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(fmt.Sprintf("{\"size\":%d}", size)));
+func main() {
+	/* pid */
+	if err := CreatePidfile(PIDFILE); err != nil {
+		fmt.Printf("can not create pid file %s\n", PIDFILE)
 		return
+	}
+	defer RemovePidfile(PIDFILE)
+
+	/* log  */
+	f, err := os.OpenFile(LOGPATH, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		fmt.Println("failed to open log\n")
+		return
+	}
+	defer f.Close()
+
+	m := martini.Classic()
+	slog = log.New(f, "[wuzei]", log.LstdFlags)
+	m.Map(slog)
+
+	conn, err = rados.NewConn("admin")
+	if err != nil {
+		slog.Println("failed to open keyring")
+		return
+	}
+
+	conn.SetConfigOption("rados_mon_op_timeout", MONTIMEOUT)
+	conn.SetConfigOption("rados_osd_op_timeout", OSDTIMEOUT)
+
+	err = conn.ReadConfigFile("/etc/ceph/ceph.conf")
+	if err != nil {
+		slog.Println("failed to open ceph.conf")
+		return
+	}
+
+
+	err = conn.Connect()
+	if err != nil {
+		slog.Println("failed to connect to remote cluster")
+		return
+	}
+	defer conn.Shutdown()
+
+	ReqQueue.Init()
+
+	m.Get("/whoareyou", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("I AM WUZEI"))
 	})
 
-	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
-		/* used for graceful stop */
-		wg.Add(1)
-		defer wg.Done()
-
-		select {
-		case <- time.After(QUEUETIMEOUT * time.Second):
-			/* send timeout to client*/
-			slog.Println("request timeout")
-			ErrorHandler(w, r, http.StatusRequestTimeout)
-			return
-		case ProcessSlots <- true:
-			/* write to channel to get a slot for writing rados object */
-		}
-		defer releaseSlot()
-
-
-		poolname := params["pool"]
-		soid := params["soid"]
-		pool, err := conn.OpenPool(poolname)
-		if err != nil {
-			slog.Println("open pool failed")
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		defer pool.Destroy()
-
-		striper, err := pool.CreateStriper()
-		if err != nil {
-			slog.Println("open pool failed")
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		defer striper.Destroy()
-
-		filename := fmt.Sprintf("%s", soid)
-		size, err := striper.State(soid)
-		if err != nil {
-			slog.Println("failed to get object " + soid)
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-
-		/* use 4M buffer to read */
-		buffersize := 4<<20
-		rd := RadosDownloader{&striper, soid, 0, make([]byte, buffersize), 0, 0}
-
-		/* set content-type */
-		/* Content-Type would be others */
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-
-		/* set the stream */
-		http.ServeContent(w, r, filename, time.Now(), &rd)
-	})
-
-	m.Delete("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", func(params martini.Params, w http.ResponseWriter, r *http.Request) {
-		/* used for graceful stop */
-		wg.Add(1)
-		defer wg.Done()
-		poolname := params["pool"]
-		soid := params["soid"]
-		pool, err := conn.OpenPool(poolname)
-		if err != nil {
-			slog.Println("open pool failed")
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		defer pool.Destroy()
-
-		striper, err := pool.CreateStriper()
-		if err != nil {
-			slog.Println("open pool failed")
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		defer striper.Destroy()
-
-		err = striper.Delete(soid)
-		if err != nil {
-			slog.Printf("delete object %s/%s failed\n", poolname, soid)
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
+	/* resume upload protocal is based on http://www.grid.net.ru/nginx/resumable_uploads.en.html */
+	m.Put("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", PutHandler)
+	m.Delete("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", DeleteHandler)
+	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", GetHandler)
+	m.Get("/info/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", InfoHandler)
 
 	originalListener, err := net.Listen("tcp", ":3000")
 	sl, err := stoppableListener.New(originalListener)
@@ -429,7 +456,6 @@ func main() {
 						syscall.SIGHUP,
 						syscall.SIGQUIT,
 						syscall.SIGTERM)
-
 	go func() {
 		server.Serve(sl)
 	}()
