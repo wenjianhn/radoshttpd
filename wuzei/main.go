@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"github.com/codegangsta/martini"
 	"github.com/hydrogen18/stoppableListener"
@@ -15,51 +16,49 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
-	"errors"
-	"strings"
-	"strconv"
 )
 
 var (
-	LOGPATH = "/var/log/wuzei/wuzei.log"
-	PIDFILE = "/var/run/wuzei/wuzei.pid"
+	LOGPATH                    = "/var/log/wuzei/wuzei.log"
+	PIDFILE                    = "/var/run/wuzei/wuzei.pid"
 	QUEUETIMEOUT time.Duration = 5 /* seconds */
-	QUEUELENGTH = 100
-	MONTIMEOUT = "30"
-	OSDTIMEOUT = "30"
-	BUFFERSIZE = 4 << 20 /* 4M */
+	QUEUELENGTH                = 100
+	MONTIMEOUT                 = "30"
+	OSDTIMEOUT                 = "30"
+	BUFFERSIZE                 = 4 << 20 /* 4M */
 
 	/* global variables */
-	slog    *log.Logger
-	conn *rados.Conn
+	slog     *log.Logger
+	conn     *rados.Conn
 	ReqQueue RequestQueue
-	wg sync.WaitGroup
+	wg       sync.WaitGroup
 )
 
 type RadosDownloader struct {
-	striper *rados.StriperPool
-	soid    string
-	offset  int64
-	buffer []byte
+	striper       *rados.StriperPool
+	soid          string
+	offset        int64
+	buffer        []byte
 	waterhighmark int
-	waterlowmark int
+	waterlowmark  int
 }
 
-
 func min(a, b int) int {
-   if a < b {
-      return a
-   }
-   return b
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (rd *RadosDownloader) Read(p []byte) (n int, err error) {
 	var count int = 0
 	/* local buffer is empty */
-	if (rd.waterhighmark == rd.waterlowmark) {
+	if rd.waterhighmark == rd.waterlowmark {
 		count, err = rd.striper.Read(rd.soid, rd.buffer, uint64(rd.offset))
 		/* Timeout or read error occurs */
 		if err != nil {
@@ -73,9 +72,9 @@ func (rd *RadosDownloader) Read(p []byte) (n int, err error) {
 		rd.waterlowmark = 0
 	}
 
-	l  := len(p)
-	if l <= rd.waterhighmark - rd.waterlowmark {
-		copy(p, rd.buffer[rd.waterlowmark:rd.waterlowmark + l])
+	l := len(p)
+	if l <= rd.waterhighmark-rd.waterlowmark {
+		copy(p, rd.buffer[rd.waterlowmark:rd.waterlowmark+l])
 		rd.waterlowmark += l
 		return l, nil
 	} else {
@@ -87,9 +86,8 @@ func (rd *RadosDownloader) Read(p []byte) (n int, err error) {
 	return 0, errors.New("read failed")
 }
 
-
 func (rd *RadosDownloader) Seek(offset int64, whence int) (int64, error) {
-	switch whence{
+	switch whence {
 	case 0:
 		rd.offset = offset
 		return offset, nil
@@ -109,7 +107,6 @@ func (rd *RadosDownloader) Seek(offset int64, whence int) (int64, error) {
 
 }
 
-
 /* RequestQueue has two functions */
 /* 2. slot is used to queue write/read request */
 
@@ -121,117 +118,115 @@ func (r *RequestQueue) Init() {
 	r.slots = make(chan bool, QUEUELENGTH)
 }
 
-
-func (r *RequestQueue) inc() error{
+func (r *RequestQueue) inc() error {
 	select {
-		case <- time.After(QUEUETIMEOUT * time.Second):
-			return errors.New("Queue is too long, timeout")
-		case r.slots <- true:
-			/* write to channel to get a slot for writing/reading rados object */
+	case <-time.After(QUEUETIMEOUT * time.Second):
+		return errors.New("Queue is too long, timeout")
+	case r.slots <- true:
+		/* write to channel to get a slot for writing/reading rados object */
 	}
 	return nil
 }
 
 func (r *RequestQueue) dec() {
-	<- r.slots
+	<-r.slots
 }
 
+func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 
-func GetHandler (params martini.Params, w http.ResponseWriter, r *http.Request) {
-
-		/* used for graceful stop */
-		wg.Add(1)
-		defer wg.Done()
-		if err := ReqQueue.inc(); err != nil {
-			slog.Println("request timeout")
-			ErrorHandler(w, r, http.StatusRequestTimeout)
-			return
-		}
-		defer ReqQueue.dec()
-
-		poolname := params["pool"]
-		soid := params["soid"]
-		pool, err := conn.OpenPool(poolname)
-		if err != nil {
-			slog.Println("open pool failed")
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		defer pool.Destroy()
-
-		striper, err := pool.CreateStriper()
-		if err != nil {
-			slog.Println("open pool failed")
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		defer striper.Destroy()
-
-		filename := fmt.Sprintf("%s", soid)
-		size, err := striper.State(soid)
-		if err != nil {
-			slog.Println("failed to get object " + soid)
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-
-		/* use 4M buffer to read */
-		buffersize := BUFFERSIZE
-		rd := RadosDownloader{&striper, soid, 0, make([]byte, buffersize), 0, 0}
-
-		/* set content-type */
-		/* Content-Type would be others */
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-
-		/* set the stream */
-		http.ServeContent(w, r, filename, time.Now(), &rd)
-}
-
-func InfoHandler (params martini.Params, w http.ResponseWriter, r *http.Request) {
-		/* used for graceful stop */
-		wg.Add(1)
-		defer wg.Done()
-
-		if err := ReqQueue.inc(); err != nil {
-			slog.Println("request timeout")
-			ErrorHandler(w, r, http.StatusRequestTimeout)
-			return
-		}
-		defer ReqQueue.dec()
-
-		poolname := params["pool"]
-		soid := params["soid"]
-		pool, err := conn.OpenPool(poolname)
-		if err != nil {
-			slog.Println("open pool failed")
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		defer pool.Destroy()
-
-		striper, err := pool.CreateStriper()
-		if err != nil {
-			slog.Println("open pool failed")
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		defer striper.Destroy()
-
-		size, err := striper.State(soid)
-		if err != nil {
-			slog.Println("failed to get object " + soid)
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		/* use json format */
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(fmt.Sprintf("{\"size\":%d}", size)));
+	/* used for graceful stop */
+	wg.Add(1)
+	defer wg.Done()
+	if err := ReqQueue.inc(); err != nil {
+		slog.Println("request timeout")
+		ErrorHandler(w, r, http.StatusRequestTimeout)
 		return
+	}
+	defer ReqQueue.dec()
+
+	poolname := params["pool"]
+	soid := params["soid"]
+	pool, err := conn.OpenPool(poolname)
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer pool.Destroy()
+
+	striper, err := pool.CreateStriper()
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer striper.Destroy()
+
+	filename := fmt.Sprintf("%s", soid)
+	size, err := striper.State(soid)
+	if err != nil {
+		slog.Println("failed to get object " + soid)
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+
+	/* use 4M buffer to read */
+	buffersize := BUFFERSIZE
+	rd := RadosDownloader{&striper, soid, 0, make([]byte, buffersize), 0, 0}
+
+	/* set content-type */
+	/* Content-Type would be others */
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+
+	/* set the stream */
+	http.ServeContent(w, r, filename, time.Now(), &rd)
 }
 
-func DeleteHandler (params martini.Params, w http.ResponseWriter, r *http.Request) {
+func InfoHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
+	/* used for graceful stop */
+	wg.Add(1)
+	defer wg.Done()
+
+	if err := ReqQueue.inc(); err != nil {
+		slog.Println("request timeout")
+		ErrorHandler(w, r, http.StatusRequestTimeout)
+		return
+	}
+	defer ReqQueue.dec()
+
+	poolname := params["pool"]
+	soid := params["soid"]
+	pool, err := conn.OpenPool(poolname)
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer pool.Destroy()
+
+	striper, err := pool.CreateStriper()
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer striper.Destroy()
+
+	size, err := striper.State(soid)
+	if err != nil {
+		slog.Println("failed to get object " + soid)
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	/* use json format */
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(fmt.Sprintf("{\"size\":%d}", size)))
+	return
+}
+
+func DeleteHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	/* used for graceful stop */
 	wg.Add(1)
 	defer wg.Done()
@@ -268,127 +263,123 @@ func DeleteHandler (params martini.Params, w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusOK)
 }
 
+func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 
-func PutHandler (params martini.Params, w http.ResponseWriter, r *http.Request) {
+	wg.Add(1)
+	defer wg.Done()
+	if err := ReqQueue.inc(); err != nil {
+		slog.Println("request timeout")
+		ErrorHandler(w, r, http.StatusRequestTimeout)
+		return
+	}
+	defer ReqQueue.dec()
 
-		wg.Add(1)
-		defer wg.Done()
-		if err := ReqQueue.inc(); err != nil {
-			slog.Println("request timeout")
+	poolname := params["pool"]
+	soid := params["soid"]
+	pool, err := conn.OpenPool(poolname)
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer pool.Destroy()
+	striper, err := pool.CreateStriper()
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer striper.Destroy()
+
+	bytesRange := r.Header.Get("Content-Range")
+
+	var offset, start, end, size int64 = 0, 0, 0, 0
+
+	if bytesRange != "" {
+		/* header format: Content-Range:bytes 0-99/300 */
+		/* remove bytes and space */
+		bytesRange = strings.Trim(bytesRange, "bytes")
+		bytesRange = strings.TrimSpace(bytesRange)
+
+		o := strings.Split(bytesRange, "/")
+		currentRange, s := o[0], o[1]
+
+		o = strings.Split(currentRange, "-")
+
+		/* o[0] is the start, o[1] is the end */
+		start, err = strconv.ParseInt(o[0], 10, 64)
+		if err != nil {
+			slog.Printf("parse Content-Range failed %s", bytesRange)
+			ErrorHandler(w, r, http.StatusBadRequest)
+			return
+		}
+		end, err = strconv.ParseInt(o[1], 10, 64)
+		if err != nil {
+			slog.Printf("parse Content-Range failed %s", bytesRange)
+			ErrorHandler(w, r, http.StatusBadRequest)
+			return
+		}
+
+		size, err = strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			slog.Printf("parse Content-Range failed %s", bytesRange)
+			ErrorHandler(w, r, http.StatusBadRequest)
+			return
+		}
+	}
+
+	buf := make([]byte, BUFFERSIZE)
+
+	if bytesRange != "" {
+		/* already get $start, $end, $size */
+		offset = start
+	} else {
+		offset = 0
+	}
+
+	for offset < end || bytesRange == "" {
+		l, err := r.Body.Read(buf)
+		if l == 0 {
+			break
+		}
+		if err != nil {
+			slog.Printf("failed to read content from client url:%s", r.RequestURI)
+			ErrorHandler(w, r, http.StatusBadRequest)
+			return
+
+		}
+
+		/* for situation that actuall transfered data is larger than range */
+		if bytesRange != "" {
+			l = min(l, int(end-offset+1))
+		}
+
+		_, err = striper.Write(soid, buf[:l], uint64(offset))
+		if err != nil {
+			slog.Printf("write to ceph timeout, url is:%s", r.RequestURI)
 			ErrorHandler(w, r, http.StatusRequestTimeout)
 			return
 		}
-		defer ReqQueue.dec()
+		offset += int64(l)
+	}
 
-		poolname := params["pool"]
-		soid := params["soid"]
-		pool, err := conn.OpenPool(poolname)
-		if err != nil {
-			slog.Println("open pool failed")
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		defer pool.Destroy()
-		striper, err := pool.CreateStriper()
-		if err != nil {
-			slog.Println("open pool failed")
-			ErrorHandler(w, r, http.StatusNotFound)
-			return
-		}
-		defer striper.Destroy()
+	w.Header().Set("Content-Type", "application/octet-stream")
 
-		bytesRange := r.Header.Get("Content-Range")
+	if bytesRange == "" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
-		var offset, start, end, size int64 = 0,0,0,0
-
-		if bytesRange != "" {
-			/* header format: Content-Range:bytes 0-99/300 */
-			/* remove bytes and space */
-			bytesRange = strings.Trim(bytesRange, "bytes")
-			bytesRange = strings.TrimSpace(bytesRange)
-
-			o := strings.Split(bytesRange, "/")
-			currentRange, s := o[0], o[1]
-
-
-			o = strings.Split(currentRange, "-")
-
-			/* o[0] is the start, o[1] is the end */
-			start, err = strconv.ParseInt(o[0], 10, 64)
-			if err != nil {
-				slog.Printf("parse Content-Range failed %s", bytesRange);
-				ErrorHandler(w, r, http.StatusBadRequest)
-				return
-			}
-			end, err = strconv.ParseInt(o[1], 10, 64)
-			if err != nil {
-				slog.Printf("parse Content-Range failed %s", bytesRange);
-				ErrorHandler(w, r, http.StatusBadRequest)
-				return
-			}
-
-			size, err = strconv.ParseInt(s, 10, 64)
-			if err != nil {
-				slog.Printf("parse Content-Range failed %s", bytesRange);
-				ErrorHandler(w, r, http.StatusBadRequest)
-				return
-			}
-		}
-
-		buf := make([]byte, BUFFERSIZE)
-
-		if bytesRange != "" {
-			/* already get $start, $end, $size */
-			offset = start
-		} else {
-			offset = 0
-		}
-
-		for offset < end || bytesRange == "" {
-			l, err := r.Body.Read(buf)
-			if l == 0 {
-				break;
-			}
-			if err != nil {
-				slog.Printf("failed to read content from client url:%s", r.RequestURI)
-				ErrorHandler(w, r, http.StatusBadRequest)
-				return
-
-			}
-
-			/* for situation that actuall transfered data is larger than range */
-			if bytesRange != "" {
-				l = min(l, int(end - offset + 1))
-			}
-
-			_, err = striper.Write(soid, buf[:l], uint64(offset))
-			if err != nil {
-				slog.Printf("write to ceph timeout, url is:%s", r.RequestURI)
-				ErrorHandler(w, r, http.StatusRequestTimeout)
-				return
-			}
-			offset += int64(l)
-		}
-
-		w.Header().Set("Content-Type", "application/octet-stream")
-
-		if bytesRange == "" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		/* support for bytesRange */
-		if size == offset + 1 {
-			/* return code 200 */
-			w.WriteHeader(http.StatusOK)
-		} else {
-			/* 'offset - 1' is the last byte */
-			w.Header().Set("Range", fmt.Sprintf("%d-%d/%d", start, offset - 1,  size))
-			w.WriteHeader(http.StatusCreated)
-		}
+	/* support for bytesRange */
+	if size == offset+1 {
+		/* return code 200 */
+		w.WriteHeader(http.StatusOK)
+	} else {
+		/* 'offset - 1' is the last byte */
+		w.Header().Set("Range", fmt.Sprintf("%d-%d/%d", start, offset-1, size))
+		w.WriteHeader(http.StatusCreated)
+	}
 }
-
-
 
 func main() {
 	/* pid */
@@ -425,7 +416,6 @@ func main() {
 		return
 	}
 
-
 	err = conn.Connect()
 	if err != nil {
 		slog.Println("failed to connect to remote cluster")
@@ -453,9 +443,9 @@ func main() {
 
 	stop := make(chan os.Signal)
 	signal.Notify(stop, syscall.SIGINT,
-						syscall.SIGHUP,
-						syscall.SIGQUIT,
-						syscall.SIGTERM)
+		syscall.SIGHUP,
+		syscall.SIGQUIT,
+		syscall.SIGTERM)
 	go func() {
 		server.Serve(sl)
 	}()
