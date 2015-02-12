@@ -21,6 +21,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"encoding/hex"
 )
 
 var (
@@ -184,6 +185,107 @@ func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, filename, time.Now(), &rd)
 }
 
+func BlockHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte(fmt.Sprintf("{\"blocksize\":%d}", BUFFERSIZE)))
+}
+
+
+func Md5sumHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
+	/* used for graceful stop */
+	wg.Add(1)
+	defer wg.Done()
+
+	if err := ReqQueue.inc(); err != nil {
+		slog.Println("request timeout")
+		ErrorHandler(w, r, http.StatusRequestTimeout)
+		return
+	}
+	defer ReqQueue.dec()
+
+	poolname := params["pool"]
+	soid := params["soid"]
+	pool, err := conn.OpenPool(poolname)
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer pool.Destroy()
+
+	striper, err := pool.CreateStriper()
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer striper.Destroy()
+
+
+	var offset int64 = 0
+	var start, end int64 = 0, 0
+	var count,l int = 0, 0
+
+	/* header format: Range:bytes 0-99 */
+	bytesRange := r.Header.Get("Range")
+	if bytesRange != "" {
+		bytesRange = strings.Trim(bytesRange, "bytes")
+		bytesRange = strings.TrimSpace(bytesRange)
+		o := strings.Split(bytesRange, "-")
+		start, err = strconv.ParseInt(o[0], 10, 64)
+		if err != nil {
+			slog.Printf("parse Content-Range failed %s", bytesRange)
+			ErrorHandler(w, r, http.StatusBadRequest)
+			return
+		}
+		end, err = strconv.ParseInt(o[1], 10, 64)
+		if err != nil {
+			slog.Printf("parse Content-Range failed %s", bytesRange)
+			ErrorHandler(w, r, http.StatusBadRequest)
+			return
+		}
+		offset = start
+	}
+
+
+	md5_ctx,_ := MD5New()
+	buf := make([]byte, BUFFERSIZE)
+	for offset <= end || bytesRange == "" {
+		count, err = striper.Read(soid, buf, uint64(offset))
+		if err != nil {
+			slog.Printf("failed to read data for md5sum")
+			ErrorHandler(w, r, 404)
+			return
+		}
+		if count == 0 {
+			break
+		}
+
+		/* handle striper.read more data than expected when using range*/
+		if bytesRange != "" && offset + int64(count) > end {
+			l = int(end - offset) + 1
+		} else {
+			l = count
+		}
+
+		if err = md5_ctx.Update(buf[:l]); err != nil {
+			slog.Printf("calc md5sum failed")
+			ErrorHandler(w, r, 501)
+			return
+		}
+		offset += int64(count)
+	}
+
+	var b []byte
+	if b, err = md5_ctx.Final(); err != nil {
+		slog.Printf("calc md5sum failed")
+		ErrorHandler(w, r, 501)
+		return
+	}
+
+	s := hex.EncodeToString(b)
+	w.Write([]byte(fmt.Sprintf("{\"md5\":%s}", s)))
+}
+
 func InfoHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	/* used for graceful stop */
 	wg.Add(1)
@@ -337,7 +439,7 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
-	for offset < end || bytesRange == "" {
+	for offset <= end || bytesRange == "" {
 		l, err := r.Body.Read(buf)
 		if l == 0 {
 			break
@@ -434,6 +536,8 @@ func main() {
 	m.Delete("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", DeleteHandler)
 	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", GetHandler)
 	m.Get("/info/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", InfoHandler)
+	m.Get("/md5sum/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", Md5sumHandler)
+	m.Get("/blocksize/",BlockHandler)
 
 	originalListener, err := net.Listen("tcp", ":3000")
 	sl, err := stoppableListener.New(originalListener)
@@ -460,6 +564,17 @@ func main() {
 	wg.Wait()
 	slog.Printf("Server shutdown\n")
 }
+
+
+/*
+func parseContentRange(s string) (start ,end uint64) {
+
+}
+
+func parseRange(s string) {
+
+}
+*/
 
 func ErrorHandler(w http.ResponseWriter, r *http.Request, status int) {
 	switch status {
