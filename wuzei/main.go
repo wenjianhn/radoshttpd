@@ -184,6 +184,47 @@ func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, filename, time.Now(), &rd)
 }
 
+func Md5sumHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
+	/* used for graceful stop */
+	wg.Add(1)
+	defer wg.Done()
+
+	if err := ReqQueue.inc(); err != nil {
+		slog.Println("request timeout")
+		ErrorHandler(w, r, http.StatusRequestTimeout)
+		return
+	}
+	defer ReqQueue.dec()
+
+	poolname := params["pool"]
+	soid := params["soid"]
+	pool, err := conn.OpenPool(poolname)
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer pool.Destroy()
+
+	striper, err := pool.CreateStriper()
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer striper.Destroy()
+
+	filename := fmt.Sprintf("%s", soid)
+	size, err := striper.State(soid)
+	if err != nil {
+		slog.Println("failed to get object " + soid)
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+
+
+}
+
 func InfoHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	/* used for graceful stop */
 	wg.Add(1)
@@ -434,6 +475,7 @@ func main() {
 	m.Delete("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", DeleteHandler)
 	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", GetHandler)
 	m.Get("/info/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", InfoHandler)
+	m.Get("/md5sum/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", Md5sumHandler)
 
 	originalListener, err := net.Listen("tcp", ":3000")
 	sl, err := stoppableListener.New(originalListener)
