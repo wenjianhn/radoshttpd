@@ -283,7 +283,7 @@ func Md5sumHandler(params martini.Params, w http.ResponseWriter, r *http.Request
 	}
 
 	s := hex.EncodeToString(b)
-	w.Write([]byte(fmt.Sprintf("{\"md5\":%s}", s)))
+	w.Write([]byte(fmt.Sprintf("{\"md5\":\"%s\"}", s)))
 }
 
 func InfoHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
