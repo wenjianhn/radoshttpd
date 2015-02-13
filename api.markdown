@@ -59,3 +59,30 @@
 	Example:
 	curl http://wuzei/whoareyou
 
+
+## Get Wuzei blocksize
+
+	GET /blocksize
+	RETURN:  xxx
+
+	Example:
+	curl http://wuzei/blocksize
+	
+	Usage:
+	When using normal upload, but it failed at some point, how could I continue?
+	file size = 1000
+	curl -XPUT --data-binary @file http://wuzei/{poolname}/{objectname}
+	=== FAILED AT SOME POINT ===
+	
+	#get blocksize and current size
+	
+	curl -XGET http://wuzei/info/{poolname}/{objectname}
+	return REMOTESIZE
+	curl -XGET http://wuzei/blocksize
+	return BLOCKSIZE
+
+	=== CONTINUE TO UPLOAD ===
+
+	#send data from REMOTESIZE-BLOCKSIZE of file	
+	curl -XPUT -H"Content-Range: bytes ($REMOTESIZE-$BLOCKSIZE) - ($FILESIZE) - 1)" --data-binary @file[REMOTESIZE-BLOCKSIZE:]  http://wuzei/{poolname}/{objectname}
+
