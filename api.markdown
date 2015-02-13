@@ -1,4 +1,4 @@
-# Put Object
+## Put Object
 
 	PUT	/{poolname}/{objectname}
 	Option Headers:
@@ -10,7 +10,7 @@
 	#upload the file
 	curl -XPUT --data-binary @file http://wuzei/{poolname}/{objectname}
 
-# Get Object
+## Get Object
 
 	GET /{poolname}/{objectname}
 	Option Headers:
@@ -19,7 +19,7 @@
 	Example:
 	curl -o output http://wuzei/{poolname}/{objectname}
 	
-# Delete Object
+## Delete Object
 	
 	DELETE /{poolname}/{objectname}
 	
@@ -27,7 +27,7 @@
 	curl -XDELETE http://wuzei/{poolname}/{objectname}
 	
 
-# Get Object's md5sum by calculating it
+## Get Object's md5sum by calculating it
 	
 	GET /calcmd5/{poolname}/{objectname}
 	Option Headers:
@@ -38,7 +38,7 @@
 	curl http://127.0.0.1:3000/calcmd5/video/newoid
 	
 
-# Get Object INFO
+## Get Object INFO
 
 	GET /info/{poolname}/{objectname}
 
@@ -51,7 +51,7 @@
 	{"size":4096}
 
 
-# Check Wuzei
+## Check Wuzei
 
 	GET /whoareyou
 	RETURN:I AM WUZEI
