@@ -536,7 +536,7 @@ func main() {
 	m.Delete("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", DeleteHandler)
 	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", GetHandler)
 	m.Get("/info/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", InfoHandler)
-	m.Get("/md5sum/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", Md5sumHandler)
+	m.Get("/calcmd5/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", Md5sumHandler)
 	m.Get("/blocksize/",BlockHandler)
 
 	originalListener, err := net.Listen("tcp", ":3000")
