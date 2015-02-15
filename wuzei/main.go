@@ -110,7 +110,6 @@ func (rd *RadosDownloader) Seek(offset int64, whence int) (int64, error) {
 
 /* RequestQueue has two functions */
 /* 2. slot is used to queue write/read request */
-
 type RequestQueue struct {
 	slots chan bool
 }
@@ -260,7 +259,7 @@ func Md5sumHandler(params martini.Params, w http.ResponseWriter, r *http.Request
 			break
 		}
 
-		/* handle striper.read more data than expected when using range*/
+		/* Handle striper.read more data than expected when having Range Header*/
 		if bytesRange != "" && offset + int64(count) > end {
 			l = int(end - offset) + 1
 		} else {
@@ -273,6 +272,7 @@ func Md5sumHandler(params martini.Params, w http.ResponseWriter, r *http.Request
 			return
 		}
 		offset += int64(count)
+		fmt.Println(offset)
 	}
 
 	var b []byte
@@ -395,7 +395,7 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 
 	bytesRange := r.Header.Get("Content-Range")
 
-	var offset, start, end, size int64 = 0, 0, 0, 0
+	var src_offset, dest_offset, start, end, size int64 = 0, 0, 0, 0, 0
 
 	if bytesRange != "" {
 		/* header format: Content-Range:bytes 0-99/300 */
@@ -430,57 +430,92 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	buf := make([]byte, BUFFERSIZE)
 
 	if bytesRange != "" {
-		/* already get $start, $end, $size */
-		offset = start
+		/* already get $start, $end */
+		src_offset = start
+		dest_offset = start
 	} else {
-		offset = 0
+		src_offset = 0
+		dest_offset = 0
 	}
 
-	for offset <= end || bytesRange == "" {
-		l, err := r.Body.Read(buf)
-		if l == 0 {
+
+	buf := make([]byte, BUFFERSIZE)
+	/* if the data len in pending_data is bigger than MAX_CHUNK_SIZE, I will flush the data to ceph */
+	var pending_data []byte
+	var MAX_CHUNK_SIZE int = BUFFERSIZE * 2
+	var available_data_size int
+
+	for src_offset <= end || bytesRange == "" {
+
+		count, err := r.Body.Read(buf)
+		if count == 0 {
 			break
 		}
 		if err != nil {
 			slog.Printf("failed to read content from client url:%s", r.RequestURI)
 			ErrorHandler(w, r, http.StatusBadRequest)
 			return
-
 		}
 
-		/* for situation that actuall transfered data is larger than range */
+
+
+		//In case the user send more data than expected.
+
+		src_offset += int64(count)
 		if bytesRange != "" {
-			l = min(l, int(end-offset+1))
+			available_data_size = min(count, int(end - src_offset +1))
+		} else {
+			available_data_size = count
 		}
 
-		_, err = striper.Write(soid, buf[:l], uint64(offset))
+		/* add newly received buffer to pending_data */
+		pending_data = append(pending_data, buf[:available_data_size]...)
+
+
+		/* if pending_data is not big enough, continue to read more data */
+		if len(pending_data) < MAX_CHUNK_SIZE {
+		   continue
+		}
+
+		/* will write bl to ceph */
+		bl := pending_data[:MAX_CHUNK_SIZE]
+		/* now pending_data point to remaining data */
+		pending_data = pending_data[MAX_CHUNK_SIZE:]
+
+
+		_, err = striper.Write(soid, bl, uint64(dest_offset))
 		if err != nil {
 			slog.Printf("write to ceph timeout, url is:%s", r.RequestURI)
 			ErrorHandler(w, r, http.StatusRequestTimeout)
 			return
 		}
-		offset += int64(l)
+
+		//Throttle
+		//push info to queue
+		//if the front is finished, cleanup 
+		//if queue.size > 3; wait a while
+		dest_offset += int64(len(bl))
 	}
+
+	//drain_pending
+	striper.Write(soid, pending_data, uint64(dest_offset))
+	//wait all queue finished
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 
 	if bytesRange == "" {
 		w.WriteHeader(http.StatusOK)
 		return
+	} else {
+		/* support for bytesRange */
+		/* 'offset - 1' is the last byte */
+		w.Header().Set("Range", fmt.Sprintf("%d-%d/%d", start, src_offset - 1, size))
+		w.WriteHeader(http.StatusOK)
 	}
 
-	/* support for bytesRange */
-	if size == offset+1 {
-		/* return code 200 */
-		w.WriteHeader(http.StatusOK)
-	} else {
-		/* 'offset - 1' is the last byte */
-		w.Header().Set("Range", fmt.Sprintf("%d-%d/%d", start, offset-1, size))
-		w.WriteHeader(http.StatusCreated)
-	}
+
 }
 
 func main() {
