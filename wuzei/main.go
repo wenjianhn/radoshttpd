@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 	"encoding/hex"
+	"container/list"
 )
 
 var (
@@ -32,6 +33,8 @@ var (
 	MONTIMEOUT                 = "30"
 	OSDTIMEOUT                 = "30"
 	BUFFERSIZE                 = 4 << 20 /* 4M */
+	AIOCONCURRENT              = 3
+	MAX_CHUNK_SIZE             = BUFFERSIZE * 2
 
 	/* global variables */
 	slog     *log.Logger
@@ -218,6 +221,7 @@ func Md5sumHandler(params martini.Params, w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer striper.Destroy()
+	defer striper.Flush()
 
 
 	var offset int64 = 0
@@ -272,7 +276,6 @@ func Md5sumHandler(params martini.Params, w http.ResponseWriter, r *http.Request
 			return
 		}
 		offset += int64(count)
-		fmt.Println(offset)
 	}
 
 	var b []byte
@@ -365,6 +368,33 @@ func DeleteHandler(params martini.Params, w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusOK)
 }
 
+/* Function name 'pending_has_completed' and 'wait_pending_front' are the same as the radosgw  */
+func pending_has_completed(p *list.List) bool{
+	if p.Len() == 0 {
+		return false
+	}
+	e := p.Front()
+	c := e.Value.(*rados.AioCompletion)
+	ret := c.IsComplete()
+	if ret == 0 {
+		return false
+	} else {
+		return true
+	}
+}
+
+
+func wait_pending_front(p * list.List) int{
+	/* remove AioCompletion from list */
+	e := p.Front()
+	p.Remove(e)
+	c := e.Value.(*rados.AioCompletion)
+	c.WaitForComplete()
+	ret := c.GetReturnValue()
+	c.Release()
+	return ret
+}
+
 func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 
 	wg.Add(1)
@@ -444,8 +474,9 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	buf := make([]byte, BUFFERSIZE)
 	/* if the data len in pending_data is bigger than MAX_CHUNK_SIZE, I will flush the data to ceph */
 	var pending_data []byte
-	var MAX_CHUNK_SIZE int = BUFFERSIZE * 2
 	var available_data_size int
+	var c  *rados.AioCompletion
+	pending := list.New()
 
 	for src_offset <= end || bytesRange == "" {
 
@@ -459,24 +490,20 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-
-
 		//In case the user send more data than expected.
-
-		src_offset += int64(count)
 		if bytesRange != "" {
-			available_data_size = min(count, int(end - src_offset +1))
+			available_data_size = min(count, int(end - src_offset + 1))
 		} else {
 			available_data_size = count
 		}
+		src_offset += int64(count)
 
 		/* add newly received buffer to pending_data */
 		pending_data = append(pending_data, buf[:available_data_size]...)
 
-
 		/* if pending_data is not big enough, continue to read more data */
 		if len(pending_data) < MAX_CHUNK_SIZE {
-		   continue
+			continue
 		}
 
 		/* will write bl to ceph */
@@ -485,23 +512,53 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		pending_data = pending_data[MAX_CHUNK_SIZE:]
 
 
-		_, err = striper.Write(soid, bl, uint64(dest_offset))
+		c = new(rados.AioCompletion)
+		c.Create()
+		_, err = striper.WriteAIO(c, soid, bl, uint64(dest_offset))
 		if err != nil {
-			slog.Printf("write to ceph timeout, url is:%s", r.RequestURI)
-			ErrorHandler(w, r, http.StatusRequestTimeout)
+			slog.Printf("starting to write aio failed")
+			c.Release()
+			ErrorHandler(w, r, 501)
 			return
 		}
+		pending.PushBack(c)
 
-		//Throttle
-		//push info to queue
+		//Throttle data
 		//if the front is finished, cleanup 
-		//if queue.size > 3; wait a while
+		for pending_has_completed(pending) {
+			if ret := wait_pending_front(pending); ret < 0 {
+				slog.Printf("write aio failed or timeout, in pending_has_completed")
+				ErrorHandler(w, r, 408)
+			}
+		}
+
+		if pending.Len() > AIOCONCURRENT {
+			slog.Println("inputstream is a bit faster, wait to finish")
+			if ret := wait_pending_front(pending); ret < 0 {
+				slog.Printf("write aio failed or timeout, in waiting pending ")
+				ErrorHandler(w, r, 408)
+			}
+		}
+
 		dest_offset += int64(len(bl))
 	}
 
 	//drain_pending
-	striper.Write(soid, pending_data, uint64(dest_offset))
+	//write all remaining data	
+	if len(pending_data) > 0 {
+		c = new(rados.AioCompletion)
+		c.Create()
+		striper.WriteAIO(c, soid, pending_data, uint64(dest_offset))
+		pending.PushBack(c)
+	}
+
 	//wait all queue finished
+	for pending.Len() > 0 {
+		if ret := wait_pending_front(pending); ret < 0 {
+			slog.Printf("write aio failed or timeout, in draining")
+			ErrorHandler(w, r, 408)
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 
@@ -514,8 +571,6 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Range", fmt.Sprintf("%d-%d/%d", start, src_offset - 1, size))
 		w.WriteHeader(http.StatusOK)
 	}
-
-
 }
 
 func main() {
