@@ -18,4 +18,3 @@ sleep 10
 echo "===check last 6M==="
 curl -H"Range:bytes 10485760-16777215" http://127.0.0.1:3000/calcmd5/video/newoid
 dd if=file bs=1M count=6 skip=10|md5sum -
-

@@ -33,7 +33,7 @@ var (
 	MONTIMEOUT                 = "30"
 	OSDTIMEOUT                 = "30"
 	BUFFERSIZE                 = 4 << 20 /* 4M */
-	AIOCONCURRENT              = 3
+	AIOCONCURRENT              = 4
 	MAX_CHUNK_SIZE             = BUFFERSIZE * 2
 
 	/* global variables */
@@ -166,7 +166,7 @@ func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	defer striper.Destroy()
 
 	filename := fmt.Sprintf("%s", soid)
-	size, err := striper.State(soid)
+	_, err = striper.State(soid)
 	if err != nil {
 		slog.Println("failed to get object " + soid)
 		ErrorHandler(w, r, http.StatusNotFound)
@@ -177,18 +177,17 @@ func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	buffersize := BUFFERSIZE
 	rd := RadosDownloader{&striper, soid, 0, make([]byte, buffersize), 0, 0}
 
-	/* set content-type */
-	/* Content-Type would be others */
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+	/* set let ServerContent to detect file type  */
+	//w.Header().Set("Content-Type", "application/octet-stream")
+	//w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+	//w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 
 	/* set the stream */
 	http.ServeContent(w, r, filename, time.Now(), &rd)
 }
 
 func BlockHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte(fmt.Sprintf("{\"blocksize\":%d}", BUFFERSIZE)))
+	w.Write([]byte(fmt.Sprintf("{\"blocksize\":%d}", MAX_CHUNK_SIZE * AIOCONCURRENT)))
 }
 
 
