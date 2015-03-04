@@ -166,7 +166,7 @@ func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	defer striper.Destroy()
 
 	filename := fmt.Sprintf("%s", soid)
-	_, err = striper.State(soid)
+	size, err := striper.State(soid)
 	if err != nil {
 		slog.Println("failed to get object " + soid)
 		ErrorHandler(w, r, http.StatusNotFound)
@@ -178,9 +178,9 @@ func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	rd := RadosDownloader{&striper, soid, 0, make([]byte, buffersize), 0, 0}
 
 	/* set let ServerContent to detect file type  */
-	//w.Header().Set("Content-Type", "application/octet-stream")
-	//w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-	//w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 
 	/* set the stream */
 	http.ServeContent(w, r, filename, time.Now(), &rd)
@@ -394,6 +394,15 @@ func wait_pending_front(p * list.List) int{
 	return ret
 }
 
+
+func drain_pending(p * list.List) int {
+	var ret int
+	for p.Len() > 0 {
+		ret = wait_pending_front(p)
+	}
+	return ret
+}
+
 func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 
 	wg.Add(1)
@@ -535,14 +544,15 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 			slog.Println("inputstream is a bit faster, wait to finish")
 			if ret := wait_pending_front(pending); ret < 0 {
 				slog.Printf("write aio failed or timeout, in waiting pending ")
+				drain_pending(pending)
 				ErrorHandler(w, r, 408)
+				return
 			}
 		}
 
 		dest_offset += int64(len(bl))
 	}
 
-	//drain_pending
 	//write all remaining data	
 	if len(pending_data) > 0 {
 		c = new(rados.AioCompletion)
@@ -551,12 +561,12 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		pending.PushBack(c)
 	}
 
-	//wait all queue finished
-	for pending.Len() > 0 {
-		if ret := wait_pending_front(pending); ret < 0 {
-			slog.Printf("write aio failed or timeout, in draining")
-			ErrorHandler(w, r, 408)
-		}
+
+	//drain_pending
+	if ret := drain_pending(pending); ret < 0 {
+		slog.Printf("write aio failed or timeout, in draining")
+		ErrorHandler(w, r, 408)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
