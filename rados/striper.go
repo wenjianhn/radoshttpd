@@ -89,6 +89,7 @@ func (sp *StriperPool) WriteAIO(c *AioCompletion, oid string, data []byte, offse
 	}
 
 	c_oid := C.CString(oid)
+	defer C.free(unsafe.Pointer(c_oid))
 
 	ret := C.rados_striper_aio_write(sp.striper, c_oid, c.completion, (*C.char)(unsafe.Pointer(&data[0])),  C.size_t(len(data)), C.uint64_t(offset))
 	if ret >= 0 {
