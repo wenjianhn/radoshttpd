@@ -579,9 +579,13 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	} else {
-		/* support for bytesRange */
-		/* 'offset - 1' is the last byte */
-		w.Header().Set("Range", fmt.Sprintf("%d-%d/%d", start, src_offset - 1, size))
+		/* user send too much data or right data*/
+		if (src_offset >= end) {
+			w.Header().Set("Range", fmt.Sprintf("%d-%d/%d", start, end, size))
+		} else {
+			/* user send too few data */
+			w.Header().Set("Range", fmt.Sprintf("%d-%d/%d", start, src_offset - 1, size))
+		}
 		w.WriteHeader(http.StatusOK)
 	}
 }
@@ -645,7 +649,7 @@ func main() {
 	originalListener, err := net.Listen("tcp", ":3000")
 	sl, err := stoppableListener.New(originalListener)
 
-	server := http.Server{}
+	server := http.Server{ReadTimeout: 30 * time.Second}
 	http.HandleFunc("/", m.ServeHTTP)
 
 	stop := make(chan os.Signal)
