@@ -494,6 +494,7 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			slog.Printf("failed to read content from client url:%s", r.RequestURI)
+			drain_pending(pending)
 			ErrorHandler(w, r, http.StatusBadRequest)
 			return
 		}
@@ -526,6 +527,7 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			slog.Printf("starting to write aio failed")
 			c.Release()
+			drain_pending(pending)
 			ErrorHandler(w, r, 501)
 			return
 		}
@@ -536,7 +538,9 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		for pending_has_completed(pending) {
 			if ret := wait_pending_front(pending); ret < 0 {
 				slog.Printf("write aio failed or timeout, in pending_has_completed")
+				drain_pending(pending)
 				ErrorHandler(w, r, 408)
+				return
 			}
 		}
 
