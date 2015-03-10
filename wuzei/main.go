@@ -36,6 +36,10 @@ var (
 	AIOCONCURRENT              = 8
 	MAX_CHUNK_SIZE             = BUFFERSIZE * 2
 
+	STRIPE_UNIT		   = uint(512 << 10) /* 512K */
+	OBJECT_SIZE                = uint(64 << 20) /* 64M */
+	STRIPE_COUNT               = uint(4)
+
 	/* global variables */
 	slog     *log.Logger
 	conn     *rados.Conn
@@ -403,6 +407,21 @@ func drain_pending(p * list.List) int {
 	return ret
 }
 
+
+func set_stripe_layout(p * rados.StriperPool) int{
+	var ret int = 0
+	if ret = p.SetLayoutStripeUnit(STRIPE_UNIT); ret < 0 {
+		return ret
+	}
+	if ret = p.SetLayoutObjectSize(OBJECT_SIZE); ret < 0 {
+		return ret
+	}
+	if ret = p.SetLayoutStripeCount(STRIPE_COUNT); ret < 0 {
+		return ret
+	}
+	return ret
+}
+
 func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 
 	wg.Add(1)
@@ -430,6 +449,7 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer striper.Destroy()
+	set_stripe_layout(&striper)
 
 	bytesRange := r.Header.Get("Content-Range")
 

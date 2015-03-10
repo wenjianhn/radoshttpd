@@ -104,6 +104,20 @@ func (sp *StriperPool) Flush() {
 	C.rados_striper_aio_flush(sp.striper)
 }
 
+func (sp * StriperPool) SetLayoutStripeUnit(stripe_unit uint ) int {
+	return int(C.rados_striper_set_object_layout_stripe_unit(sp.striper, C.uint(stripe_unit)))
+}
+
+func (sp * StriperPool) SetLayoutStripeCount(stripe_count uint) int {
+	return int(C.rados_striper_set_object_layout_stripe_count(sp.striper, C.uint(stripe_count)))
+
+}
+
+func (sp * StriperPool) SetLayoutObjectSize(object_size uint) int{
+	return int(C.rados_striper_set_object_layout_object_size(sp.striper, C.uint(object_size)))
+
+}
+
 func (c *AioCompletion) Create() error {
 	ret := C.rados_aio_create_completion(nil, nil, nil, (*C.rados_completion_t)(&c.completion))
 	if ret >= 0 {
@@ -130,3 +144,4 @@ func (c *AioCompletion) GetReturnValue() int {
 	ret := int(C.rados_aio_get_return_value(c.completion))
 	return ret
 }
+
