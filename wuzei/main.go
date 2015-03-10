@@ -33,7 +33,7 @@ var (
 	MONTIMEOUT                 = "30"
 	OSDTIMEOUT                 = "30"
 	BUFFERSIZE                 = 4 << 20 /* 4M */
-	AIOCONCURRENT              = 8
+	AIOCONCURRENT              = 4
 	MAX_CHUNK_SIZE             = BUFFERSIZE * 2
 
 	STRIPE_UNIT		   = uint(512 << 10) /* 512K */
@@ -191,7 +191,7 @@ func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 }
 
 func BlockHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte(fmt.Sprintf("{\"blocksize\":%d}", MAX_CHUNK_SIZE )))
+	w.Write([]byte(fmt.Sprintf("{\"blocksize\":%d}", MAX_CHUNK_SIZE * AIOCONCURRENT)))
 }
 
 
