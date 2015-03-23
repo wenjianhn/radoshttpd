@@ -103,7 +103,7 @@ func (rd *RadosDownloader) Seek(offset int64, whence int) (int64, error) {
 		rd.offset += offset
 		return rd.offset, nil
 	case 2:
-		size, err := rd.striper.State(rd.soid)
+		size, _, err := rd.striper.State(rd.soid)
 		if err != nil {
 			return 0, nil
 		}
@@ -170,7 +170,7 @@ func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	defer striper.Destroy()
 
 	filename := fmt.Sprintf("%s", soid)
-	size, err := striper.State(soid)
+	size, _, err := striper.State(soid)
 	if err != nil {
 		slog.Println("failed to get object " + soid)
 		ErrorHandler(w, r, http.StatusNotFound)
@@ -322,7 +322,7 @@ func InfoHandler(params martini.Params, w http.ResponseWriter, r *http.Request) 
 	}
 	defer striper.Destroy()
 
-	size, err := striper.State(soid)
+	size, _, err := striper.State(soid)
 	if err != nil {
 		slog.Println("failed to get object " + soid)
 		ErrorHandler(w, r, http.StatusNotFound)
