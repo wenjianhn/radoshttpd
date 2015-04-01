@@ -8,11 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/codegangsta/martini"
-	"github.com/hydrogen18/stoppableListener"
 	"github.com/thesues/radoshttpd/rados"
+	"github.com/thesues/radoshttpd/nettimeout"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -666,8 +665,7 @@ func main() {
 	m.Get("/calcmd5/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", Md5sumHandler)
 	m.Get("/blocksize/",BlockHandler)
 
-	originalListener, err := net.Listen("tcp", ":3000")
-	sl, err := stoppableListener.New(originalListener)
+	sl,_ := nettimeout.NewListener("3000", 30* time.Second, 30 * time.Second);
 
 	server := http.Server{}
 	http.HandleFunc("/", m.ServeHTTP)
