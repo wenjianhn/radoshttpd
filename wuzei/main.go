@@ -669,7 +669,7 @@ func main() {
 	originalListener, err := net.Listen("tcp", ":3000")
 	sl, err := stoppableListener.New(originalListener)
 
-	server := http.Server{ReadTimeout: 30 * time.Second}
+	server := http.Server{}
 	http.HandleFunc("/", m.ServeHTTP)
 
 	stop := make(chan os.Signal)
