@@ -196,7 +196,6 @@ func BlockHandler(params martini.Params, w http.ResponseWriter, r *http.Request)
 
 }
 
-
 func MkTorrentHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 
 	wg.Add(1)
@@ -218,22 +217,24 @@ func MkTorrentHandler(params martini.Params, w http.ResponseWriter, r *http.Requ
 	defer pool.Destroy()
 
 
-	var data []byte
-	piece_length, err := pool.GetStripeSHA1(soid, data)
-	if err != nil {
+	data, piece_length, length, err := pool.GetStripeSHA1(soid)
+	if err != nil || len(data) == 0{
 		slog.Println("get stripesha1 failed")
 		ErrorHandler(w, r, http.StatusNotFound)
 		return
 	}
 
+    // TODO 
 	var info = make(map[string]interface{})
-	info["key"] = soid
+	info["name"] = soid
 	info["piece length"] = piece_length
+	info["length"] = length
 	info["pieces"] = data
 
 	var torrent = make(map[string]interface{})
 	torrent["info"] = info
 	torrent["announce"] = "http://10.180.92.57:8080/announce"
+	torrent["url-list"] = "http://192.169.0.69:3000/" + poolname + "/" + soid
 
 	w.Header().Set("Content-Type", "application/x-bittorrent")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s%s", soid, ".torrent"))
