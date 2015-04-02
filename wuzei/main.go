@@ -512,11 +512,12 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		if count == 0 {
 			break
 		}
-		if err != nil {
-			slog.Printf("failed to read content from client url:%s", r.RequestURI)
-			drain_pending(pending)
-			ErrorHandler(w, r, http.StatusBadRequest)
-			return
+		if err != nil && err != io.EOF {
+				slog.Printf("failed to read content from client url:%s, %s",
+					r.RequestURI, err.Error())
+				drain_pending(pending)
+				ErrorHandler(w, r, http.StatusBadRequest)
+				return
 		}
 
 		//In case the user send more data than expected.
