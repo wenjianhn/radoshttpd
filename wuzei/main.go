@@ -23,6 +23,7 @@ import (
 	"time"
 	"encoding/hex"
 	"container/list"
+	"github.com/zeebo/bencode"
 )
 
 var (
@@ -191,9 +192,60 @@ func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 }
 
 func BlockHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
+
 	w.Write([]byte(fmt.Sprintf("{\"blocksize\":%d}", MAX_CHUNK_SIZE * AIOCONCURRENT)))
+
 }
 
+
+func MkTorrentHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
+
+	wg.Add(1)
+	defer wg.Done()
+	if err := ReqQueue.inc(); err != nil {
+		slog.Println("request timeout")
+		ErrorHandler(w, r, http.StatusRequestTimeout)
+		return
+	}
+	defer ReqQueue.dec()
+	poolname := params["pool"]
+	soid := params["soid"]
+	pool, err := conn.OpenPool(poolname)
+	if err != nil {
+		slog.Println("open pool failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+	defer pool.Destroy()
+
+
+	var data []byte
+	piece_length, err := pool.GetStripeSHA1(soid, data)
+	if err != nil {
+		slog.Println("get stripesha1 failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+
+	var info = make(map[string]interface{})
+	info["key"] = soid
+	info["piece length"] = piece_length
+	info["pieces"] = data
+
+	var torrent = make(map[string]interface{})
+	torrent["info"] = info
+	torrent["announce"] = "http://10.180.92.57:8080/announce"
+
+	w.Header().Set("Content-Type", "application/x-bittorrent")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s%s", soid, ".torrent"))
+
+	enc := bencode.NewEncoder(w)
+	if err = enc.Encode(torrent); err != nil {
+		slog.Println("format torrent failed")
+		ErrorHandler(w, r, http.StatusNotFound)
+		return
+	}
+}
 
 func Md5sumHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	/* used for graceful stop */
@@ -664,6 +716,7 @@ func main() {
 	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", GetHandler)
 	m.Get("/info/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", InfoHandler)
 	m.Get("/calcmd5/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", Md5sumHandler)
+	m.Get("/mktorrent/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", MkTorrentHandler)
 	m.Get("/blocksize/",BlockHandler)
 
 	originalListener, err := net.Listen("tcp", ":3000")
