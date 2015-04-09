@@ -36,7 +36,7 @@ var (
 	AIOCONCURRENT              = 4
 	MAX_CHUNK_SIZE             = BUFFERSIZE * 2
 
-	STRIPE_UNIT		   = uint(512 << 10) /* 512K */
+	STRIPE_UNIT		   = uint(2 << 20) /* 2M */
 	OBJECT_SIZE                = uint(64 << 20) /* 64M */
 	STRIPE_COUNT               = uint(4)
 
@@ -230,6 +230,7 @@ func MkTorrentHandler(params martini.Params, w http.ResponseWriter, r *http.Requ
 	info["piece length"] = piece_length
 	info["length"] = length
 	info["pieces"] = data
+	info["private"] = 1
 
 	var torrent = make(map[string]interface{})
 	torrent["info"] = info
