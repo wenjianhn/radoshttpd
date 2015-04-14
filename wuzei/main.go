@@ -22,6 +22,9 @@ import (
 	"time"
 	"encoding/hex"
 	"container/list"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base64"
 )
 
 var (
@@ -38,6 +41,7 @@ var (
 	STRIPE_UNIT		   = uint(512 << 10) /* 512K */
 	OBJECT_SIZE                = uint(64 << 20) /* 64M */
 	STRIPE_COUNT               = uint(4)
+	SECRET                     = "wuzei"
 
 	/* global variables */
 	slog     *log.Logger
@@ -137,6 +141,25 @@ func (r *RequestQueue) inc() error {
 func (r *RequestQueue) dec() {
 	<-r.slots
 }
+
+//use HMAC
+func AuthMe(key string) martini.Handler {
+	return func(res http.ResponseWriter, req *http.Request, c martini.Context) {
+		/* allow all GET */
+		if req.Method == "GET" {
+			return
+		}
+		auth := req.Header.Get("Authorization")
+		mac := hmac.New(sha1.New, []byte(key))
+		mac.Write([]byte(req.URL.Path))
+		expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+		if !SecureCompare(auth, expected) {
+			slog.Printf("expected key is %s, but received key is %s", expected, auth);
+			ErrorHandler(res, req, http.StatusUnauthorized)
+		}
+	}
+}
+
 
 func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 
@@ -627,6 +650,7 @@ func main() {
 	defer f.Close()
 
 	m := martini.Classic()
+	m.Use(AuthMe(SECRET))
 	slog = log.New(f, "[wuzei]", log.LstdFlags)
 	m.Map(slog)
 
@@ -692,16 +716,6 @@ func main() {
 }
 
 
-/*
-func parseContentRange(s string) (start ,end uint64) {
-
-}
-
-func parseRange(s string) {
-
-}
-*/
-
 func ErrorHandler(w http.ResponseWriter, r *http.Request, status int) {
 	switch status {
 	case http.StatusNotFound:
@@ -710,5 +724,8 @@ func ErrorHandler(w http.ResponseWriter, r *http.Request, status int) {
 	case http.StatusRequestTimeout:
 		w.WriteHeader(status)
 		w.Write([]byte("server is too busy,timeout"))
+	case http.StatusUnauthorized:
+		w.WriteHeader(status)
+		w.Write([]byte("UnAuthorized"))
 	}
 }

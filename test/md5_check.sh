@@ -1,13 +1,19 @@
 rm -f newoid
 rm -f file
+. ./common.sh
+
+
+auth=$(gen_hmac /video/newoid)
+
 dd if=/dev/urandom of=file bs=16M count=1
-curl -XPUT --data-binary @file http://127.0.0.1:3000/video/newoid
+curl -XPUT -H"Authorization: $auth" --data-binary @file http://127.0.0.1:3000/video/newoid
 start=0
 end=10485759 # 10M - 1
 
 echo "===check all data==="
 curl http://127.0.0.1:3000/calcmd5/video/newoid
 md5sum file
+
 
 sleep 10
 echo "===check first 10M==="
