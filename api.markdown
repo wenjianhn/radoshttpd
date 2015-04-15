@@ -1,3 +1,24 @@
+## Auth Method
+	
+	All request must have the header Authorization
+	Client and server shared the same key
+	Use hmac/sha1 and base64 to calculate base64(hmac_sha1(key, urlpath)) = code
+	Add a header to http request
+	Authorization: code
+
+
+	PUT /video/newoid HTTP/1.1
+	Host: 127.0.0.1:3000
+	Authorization: frZ21ljcfDaiSVLh9vutZzBOcEU=
+	Content-Length: 83886080
+	Content-Type: application/x-www-form-urlencoded
+	
+
+	example:
+	auth=`python ghmac.py key url.path`
+	curl -i -H"Authorivation:$auth" -XDELETE http://127.0.0.1:3000/video/newoid
+	
+
 ## Put Object
 
 	PUT	/{poolname}/{objectname}
