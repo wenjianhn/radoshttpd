@@ -5,6 +5,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/codegangsta/martini"
@@ -25,6 +26,10 @@ import (
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
+
+
+	"bitbucket.org/wenjianhn/chunkaligned"
+	"bitbucket.org/wenjianhn/wugui"
 )
 
 var (
@@ -161,6 +166,16 @@ func AuthMe(key string) martini.Handler {
 }
 
 
+func isCacheable(size int64) bool {
+	// NOTE(wenjianhn): only cache small files now
+	// We may need to cache file whose name contains specific suffix/characters.
+
+	if size <= int64(cfg.CacheMaxObjectSizeKBytes) * 1024 {
+		return true
+	}
+	return false
+}
+
 func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 
 	/* used for graceful stop */
@@ -198,6 +213,20 @@ func GetHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		ErrorHandler(w, r, http.StatusNotFound)
 		return
 	}
+
+	if isCacheable(int64(size)) {
+		rr := wugui.NewRadosReaderAt(&striper, poolname, filename, int64(size))
+		content, err := chunkaligned.NewChunkAlignedReaderAt(&rr, cfg.CacheChunkSizeKBytes * 1024)
+		if err != nil {
+			slog.Println(err)
+			ErrorHandler(w, r, http.StatusInternalServerError)
+			return
+		}
+
+		readSeeker := io.NewSectionReader(content, 0, content.Size())
+		http.ServeContent(w, r, filename, time.Now(), readSeeker)
+		return
+        }
 
 	/* use 4M buffer to read */
 	buffersize := BUFFERSIZE
@@ -577,7 +606,7 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		pending.PushBack(c)
 
 		//Throttle data
-		//if the front is finished, cleanup 
+		//if the front is finished, cleanup
 		for pending_has_completed(pending) {
 			if ret := wait_pending_front(pending); ret < 0 {
 				slog.Printf("write aio failed or timeout, in pending_has_completed")
@@ -600,7 +629,7 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 		dest_offset += int64(len(bl))
 	}
 
-	//write all remaining data	
+	//write all remaining data
 	if len(pending_data) > 0 {
 		c = new(rados.AioCompletion)
 		c.Create()
@@ -633,6 +662,48 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type gcCfg struct {
+	AdminToken string
+	Name string
+	CacheSizeMBytes int   // max per-node memory usage
+	CacheChunkSizeKBytes int
+	CacheMaxObjectSizeKBytes int  // Defines maximum size of the s3 object to be kept in cache.
+	MyIPAddr string
+	Port int
+	Peers []string  // IP addresses of all the nodes
+}
+
+var cfg gcCfg
+
+func getGcCfg() (cfg gcCfg, err error) {
+	// TODO(wenjianhn): get json from etcd
+
+	f, err := os.Open("/etc/wuzei/wuzei.json")
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	err = json.NewDecoder(f).Decode(&cfg)
+	if err != nil {
+		err = errors.New("failed to parse wuzei.json: " + err.Error())
+		return
+	}
+
+	found := false
+	for _, peer := range cfg.Peers {
+		if peer == cfg.MyIPAddr {
+			found = true
+			break
+		}
+	}
+	if !found {
+		cfg.Peers = append(cfg.Peers, cfg.MyIPAddr)
+	}
+
+	return
+}
+
 func main() {
 	/* pid */
 	if err := CreatePidfile(PIDFILE); err != nil {
@@ -653,6 +724,19 @@ func main() {
 	m.Use(AuthMe(SECRET))
 	slog = log.New(f, "[wuzei]", log.LstdFlags)
 	m.Map(slog)
+
+	cfg, err = getGcCfg()
+	if err != nil {
+		slog.Println(err.Error())
+		return
+	}
+
+	wugui.InitCachePool(cfg.MyIPAddr, cfg.Peers, cfg.Port)
+	slog.Printf("Config of group cache: %+v\n", cfg)
+
+	var cacheSize int64
+	cacheSize = int64(cfg.CacheSizeMBytes) * 1024 * 1024
+	wugui.InitRadosCache(cfg.Name, cacheSize, cfg.CacheChunkSizeKBytes * 1024)
 
 	conn, err = rados.NewConn("admin")
 	if err != nil {
@@ -682,6 +766,18 @@ func main() {
 		w.Write([]byte("I AM WUZEI"))
 	})
 
+	m.Get("/cachestats", func(w http.ResponseWriter, r *http.Request) {
+		// TODO(wenjianhn): Use nginx ACL
+
+		token, ok := r.Header["X-Wuzei-Security-Token"]
+		if !ok || token[0] != cfg.AdminToken {
+			ErrorHandler(w, r, http.StatusForbidden)
+			return
+		}
+
+		fmt.Fprint(w, fmt.Sprintf("%+v\n", wugui.GetRadosCacheStats()))
+	})
+
 	/* resume upload protocal is based on http://www.grid.net.ru/nginx/resumable_uploads.en.html */
 	m.Put("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", PutHandler)
 	m.Delete("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", DeleteHandler)
@@ -695,8 +791,8 @@ func main() {
 	server := http.Server{}
 	http.HandleFunc("/", m.ServeHTTP)
 
-	stop := make(chan os.Signal)
-	signal.Notify(stop, syscall.SIGINT,
+	sigChan := make(chan os.Signal)
+	signal.Notify(sigChan, syscall.SIGINT,
 		syscall.SIGHUP,
 		syscall.SIGQUIT,
 		syscall.SIGTERM)
@@ -705,19 +801,39 @@ func main() {
 	}()
 
 	slog.Printf("Serving HTTP\n")
-	select {
-	case signal := <-stop:
-		slog.Printf("Got signal:%v\n", signal)
+	for {
+		select {
+		case signal := <-sigChan:
+			slog.Printf("Got signal:%v\n", signal)
+			switch signal {
+			case syscall.SIGHUP:
+				slog.Println("Reloading config file.")
+				cfg, err = getGcCfg()
+				if err != nil {
+					slog.Printf("Failed to load config: %s\n", err.Error())
+					continue
+				}
+				slog.Printf("Updating Peers to: %v with Port: %d\n", cfg.Peers, cfg.Port)
+				wugui.SetCachePoolPeers(cfg.Peers, cfg.Port)
+			default:
+				sl.Stop()
+				slog.Printf("Waiting on server\n")
+				wg.Wait()
+				slog.Printf("Server shutdown\n")
+
+				// NOTE(wenjianhn): deferred functions will not run if using os.Exit(0).
+				return
+			}
+		}
 	}
-	sl.Stop()
-	slog.Printf("Waiting on server\n")
-	wg.Wait()
-	slog.Printf("Server shutdown\n")
 }
 
 
 func ErrorHandler(w http.ResponseWriter, r *http.Request, status int) {
 	switch status {
+	case http.StatusForbidden:
+		w.WriteHeader(status)
+		w.Write([]byte("Forbidden"))
 	case http.StatusNotFound:
 		w.WriteHeader(status)
 		w.Write([]byte("object not found"))
@@ -727,5 +843,8 @@ func ErrorHandler(w http.ResponseWriter, r *http.Request, status int) {
 	case http.StatusUnauthorized:
 		w.WriteHeader(status)
 		w.Write([]byte("UnAuthorized"))
+	case http.StatusInternalServerError:
+		w.WriteHeader(status)
+		w.Write([]byte("Internal Server Error"))
 	}
 }
