@@ -1,8 +1,12 @@
+. ./common.sh
+
 rm -f testrd
 rm -f file
 
+auth=$(gen_hmac /video/testrd)
+
 dd if=/dev/urandom of=file bs=64M count=4
-curl -XPUT -i --data-binary @file http://127.0.0.1:3000/video/testrd
+curl -H"Authorization: $auth" -XPUT -i --data-binary @file http://127.0.0.1:3000/video/testrd
 expected=$(sha1sum file | awk '{print $1}')
 rm -f file
 
@@ -21,4 +25,4 @@ else
     echo Test passed
 fi
 
-curl -XDELETE http://127.0.0.1:3000/video/testrd
+curl -XDELETE -H"Authorization: $auth" http://127.0.0.1:3000/video/testrd
