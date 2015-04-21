@@ -1,7 +1,17 @@
 {
 	"ImportPath": "github.com/thesues/radoshttpd/wuzei",
-	"GoVersion": "go1.2",
+	"GoVersion": "go1.3.3",
 	"Deps": [
+		{
+			"ImportPath": "bitbucket.org/wenjianhn/chunkaligned",
+			"Comment": "v0.1",
+			"Rev": "748ab19f6ec99d8ef0e0802877ea17c48bbffba4"
+		},
+		{
+			"ImportPath": "bitbucket.org/wenjianhn/wugui",
+			"Comment": "v0.1",
+			"Rev": "a33bfb92853fafd43b107505219c747c68113e83"
+		},
 		{
 			"ImportPath": "github.com/codegangsta/inject",
 			"Comment": "v1.0-rc1-4-g4b81725",
@@ -11,6 +21,14 @@
 			"ImportPath": "github.com/codegangsta/martini",
 			"Comment": "v1.0-56-g819aca5",
 			"Rev": "819aca59fdc412028cc5348ff3d16be2715d33cf"
+		},
+		{
+			"ImportPath": "github.com/golang/groupcache",
+			"Rev": "604ed5785183e59ae2789449d89e73f3a2a77987"
+		},
+		{
+			"ImportPath": "github.com/golang/protobuf/proto",
+			"Rev": "c22ae3cf020a21ebb7ae566dccbe90fc8ea4f9ea"
 		},
 		{
 			"ImportPath": "github.com/hydrogen18/stoppableListener",
