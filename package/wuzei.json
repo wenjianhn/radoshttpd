@@ -1,6 +1,5 @@
 {
     "Name": "objcache.wuzei",
-    "AdminToken": "9f449d76-d083-44fa-84d7-805a4432d284",
     "CacheSizeMBytes": 1024,
     "CacheChunkSizeKBytes": 2048,
     "CacheMaxObjectSizeKBytes": 4096,

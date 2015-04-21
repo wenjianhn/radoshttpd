@@ -663,7 +663,6 @@ func PutHandler(params martini.Params, w http.ResponseWriter, r *http.Request) {
 }
 
 type gcCfg struct {
-	AdminToken string
 	Name string
 	CacheSizeMBytes int   // max per-node memory usage
 	CacheChunkSizeKBytes int
@@ -767,14 +766,6 @@ func main() {
 	})
 
 	m.Get("/cachestats", func(w http.ResponseWriter, r *http.Request) {
-		// TODO(wenjianhn): Use nginx ACL
-
-		token, ok := r.Header["X-Wuzei-Security-Token"]
-		if !ok || token[0] != cfg.AdminToken {
-			ErrorHandler(w, r, http.StatusForbidden)
-			return
-		}
-
 		fmt.Fprint(w, fmt.Sprintf("%+v\n", wugui.GetRadosCacheStats()))
 	})
 
