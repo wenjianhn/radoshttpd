@@ -151,7 +151,7 @@ func (r *RequestQueue) dec() {
 func AuthMe(key string) martini.Handler {
 	return func(res http.ResponseWriter, req *http.Request, c martini.Context) {
 		/* allow all GET */
-		if req.Method == "GET" {
+		if req.Method == "GET" || req.Method == "HEAD" {
 			return
 		}
 		auth := req.Header.Get("Authorization")
