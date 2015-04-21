@@ -14,16 +14,6 @@ replacement for memcached in many cases.
 
 	所有wuzei节点都应使用同样的名字，以共享Groupcache.
 
-* "AdminToken": "9f449d76-d083-44fa-84d7-805a4432d284"
-
-	客户端可用该token获取任一个节点的缓存状态。
-
-	用法示例：
-
-		[root@ceph-58 wuzei]# curl -s -H x-wuzei-security-token:9f449d76-d083-44fa-84d7-805a4432d284 http://localhost:3000/cachestats
-
-		{Gets:47828 CacheHits:2 PeerLoads:0 PeerErrors:0 Loads:47826 LoadsDeduped:47826 LocalLoads:47826 LocalLoadErrs:0 ServerRequests:0}
-
 * "CacheSizeMBytes": 1024
 
 	当前节点用于缓存的内存大小。单位为MiB.
