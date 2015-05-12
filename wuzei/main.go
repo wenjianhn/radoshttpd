@@ -775,7 +775,7 @@ func main() {
 	m.Get("/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", GetHandler)
 	m.Get("/info/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", InfoHandler)
 	m.Get("/calcmd5/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", Md5sumHandler)
-	m.Get("/blocksize/",BlockHandler)
+	m.Get("/blocksize",BlockHandler)
 
 	sl,_ := nettimeout.NewListener("3000", 30* time.Second, 30 * time.Second);
 
