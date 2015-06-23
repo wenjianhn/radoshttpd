@@ -4,6 +4,7 @@ import (
 	"github.com/hydrogen18/stoppableListener"
 	"net"
 	"time"
+	"strconv"
 )
 
 // Listener wraps a net.Listener, and gives a place to store the timeout
@@ -56,8 +57,8 @@ func (c *Conn) Write(b []byte) (int, error) {
 	return c.Conn.Write(b)
 }
 
-func NewListener(port string, readTimeout, writeTimeout time.Duration) (*Listener, error){
-	originalListener, err := net.Listen("tcp", ":3000")
+func NewListener(port int, readTimeout, writeTimeout time.Duration) (*Listener, error){
+	originalListener, err := net.Listen("tcp", ":" + strconv.Itoa(port))
 	sl, err := stoppableListener.New(originalListener)
 
 	if err != nil {

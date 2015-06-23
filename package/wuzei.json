@@ -5,5 +5,7 @@
     "CacheMaxObjectSizeKBytes": 4096,
     "MyIPAddr": "127.0.0.1",
     "Port": 10946,
+    "ListenPort":3000,
     "Peers": ["127.0.0.1"]
+  
 }

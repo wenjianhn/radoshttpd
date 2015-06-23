@@ -670,6 +670,7 @@ type gcCfg struct {
 	MyIPAddr string
 	Port int
 	Peers []string  // IP addresses of all the nodes
+	ListenPort int
 }
 
 var cfg gcCfg
@@ -777,7 +778,7 @@ func main() {
 	m.Get("/calcmd5/(?P<pool>[A-Za-z0-9]+)/(?P<soid>[^/]+)", Md5sumHandler)
 	m.Get("/blocksize",BlockHandler)
 
-	sl,_ := nettimeout.NewListener("3000", 30* time.Second, 30 * time.Second);
+	sl,_ := nettimeout.NewListener(cfg.ListenPort, 30* time.Second, 30 * time.Second);
 
 	server := http.Server{}
 	http.HandleFunc("/", m.ServeHTTP)
