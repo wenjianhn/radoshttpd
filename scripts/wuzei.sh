@@ -1,5 +1,18 @@
 #!/bin/bash
-# See how we were called.
+
+# Start/stop wuzei daemons
+# chkconfig: 2345 60 80
+
+### BEGIN INIT INFO
+# Provides:          wuzei
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Required-Start:    $remote_fs $named $network $time
+# Required-Stop:     $remote_fs $named $network $time
+# Short-Description: Start wuzei daemons at boot time
+# Description:       Enable Ceph distributed file system services.
+### END INIT INFO
+
 
 . /etc/rc.d/init.d/functions
 pidfile=/var/run/wuzei/wuzei.pid

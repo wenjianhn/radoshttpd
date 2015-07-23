@@ -40,6 +40,8 @@ install -p -D -m 640 %{SOURCE1} %{buildroot}%{_sysconfdir}/wuzei/wuzei.json
 %clean
 rm -rf %{buildroot}
 
+%post
+/sbin/chkconfig --add wuzei
 
 %files
 %defattr(-,root,root,-)
